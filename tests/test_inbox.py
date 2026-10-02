@@ -133,6 +133,10 @@ class InboxTests(unittest.TestCase):
         self.assertEqual(n, 1)
         self.assertEqual(State(self.path).digests[DID]["status"], "skip")
 
+    def test_buttons_still_cleared_when_toast_fails(self):
+        _, api = self.poll([press(f"d:{DID}:ok")], fail=True)
+        self.assertEqual(api.cleared, [(OWNER, 77)])
+
     def test_offset_is_persisted_and_reused(self):
         self.poll([press(f"d:{DID}:ok", uid=41)])
         _, api = self.poll([])

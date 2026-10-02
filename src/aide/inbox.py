@@ -44,6 +44,21 @@ def is_allowed(update: dict, allowed_chat_id: str) -> bool:
         return False
 
 
+def _describe(u, allowed_chat_id: str) -> str:
+    """Why an update was ignored, without logging any message content."""
+    if not isinstance(u, dict):
+        return "형식 불명"
+    cq = u.get("callback_query")
+    if not isinstance(cq, dict):
+        return "버튼 입력이 아님"
+    try:
+        who = "본인" if str(cq["from"]["id"]) == str(allowed_chat_id) else "다른 사람"
+        where = "본인 채팅" if str(cq["message"]["chat"]["id"]) == str(allowed_chat_id) else "다른 채팅"
+    except (KeyError, TypeError):
+        return "버튼 입력이지만 보낸 사람/채팅 정보가 없음 (너무 오래된 메시지일 수 있음)"
+    return f"{who} / {where}" + (" / 봇" if cq.get("from", {}).get("is_bot") else "")
+
+
 def process_updates(updates: list, state: State, *, token: str, allowed_chat_id: str, api=telegram) -> int:
     """Apply button presses to `state`. Returns how many were acted on.
 
@@ -57,6 +72,7 @@ def process_updates(updates: list, state: State, *, token: str, allowed_chat_id:
             state.offset = max(state.offset, uid + 1)
         if not isinstance(u, dict) or not is_allowed(u, allowed_chat_id):
             ignored += 1
+            log.info("무시한 업데이트: %s", _describe(u, allowed_chat_id))
             continue
         cq = u["callback_query"]
         m = CALLBACK_RE.match(cq.get("data") if isinstance(cq.get("data"), str) else "")
@@ -67,12 +83,17 @@ def process_updates(updates: list, state: State, *, token: str, allowed_chat_id:
             reply = {None: "만료된 알림이에요", "dup": "이미 처리됐어요"}.get(outcome, REPLIES.get(outcome or "", ""))
             if outcome in REPLIES:
                 handled += 1
+        # Two independent best-effort steps: a late press makes answerCallbackQuery fail
+        # (Telegram only accepts it for a short time), but the buttons should still go away.
         try:
             api.answer_callback(token, str(cq.get("id", "")), reply)
-            if m and reply in REPLIES.values():
+        except telegram.TelegramError as e:
+            log.info("토스트 표시 실패(오래된 버튼이면 정상, 기록은 반영됨): %s", e)
+        if m and reply in REPLIES.values():
+            try:
                 api.clear_buttons(token, str(allowed_chat_id), int(cq["message"]["message_id"]))
-        except (telegram.TelegramError, KeyError, TypeError, ValueError) as e:
-            log.warning("버튼 응답 표시 실패(기록은 반영됨): %s", e)
+            except (telegram.TelegramError, KeyError, TypeError, ValueError) as e:
+                log.info("버튼 제거 실패(기록은 반영됨): %s", e)
     if ignored:
         log.info("허용되지 않았거나 해석 불가한 업데이트 %d건 무시", ignored)
     return handled
