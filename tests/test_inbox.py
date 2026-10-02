@@ -192,6 +192,80 @@ class StateExtrasTests(unittest.TestCase):
                 pass
 
 
+class WatcherLockTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.cfg = Config(state_path=str(Path(self.dir.name) / "state.json"))
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_inactive_until_touched_then_released(self):
+        self.assertFalse(inbox.watcher_active(self.cfg))
+        inbox.touch_watcher(self.cfg)
+        self.assertTrue(inbox.watcher_active(self.cfg))
+        inbox.release_watcher(self.cfg)
+        self.assertFalse(inbox.watcher_active(self.cfg))
+
+    def test_stale_lock_means_watcher_died(self):
+        import os, time
+        inbox.touch_watcher(self.cfg)
+        lock = inbox._watch_lock(self.cfg)
+        old = time.time() - inbox.WATCH_FRESH - 10
+        os.utime(lock, (old, old))
+        self.assertFalse(inbox.watcher_active(self.cfg))
+
+    def test_one_shot_poll_stands_down_while_watching(self):
+        from unittest import mock
+        import os
+        import aide.__main__ as cli
+
+        inbox.touch_watcher(self.cfg)
+        with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "1"}), \
+                mock.patch.object(inbox, "poll_once", side_effect=AssertionError("must not poll")):
+            self.assertEqual(cli._poll(self.cfg, watch=False), 0)
+
+    def test_second_watcher_exits_immediately(self):
+        from unittest import mock
+        import os
+        import aide.__main__ as cli
+
+        inbox.touch_watcher(self.cfg)
+        with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "1"}), \
+                mock.patch.object(inbox, "poll_once", side_effect=AssertionError("must not poll")):
+            self.assertEqual(cli._poll(self.cfg, watch=True), 0)
+        self.assertTrue(inbox.watcher_active(self.cfg))  # the running one keeps its lock
+
+    def test_watch_loop_keeps_lock_fresh_while_polling(self):
+        from unittest import mock
+        import os
+        import aide.__main__ as cli
+
+        seen = []
+
+        def poll(*a, **k):
+            seen.append(inbox.watcher_active(self.cfg))  # lock must exist DURING the wait
+            raise KeyboardInterrupt
+
+        with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "1"}), \
+                mock.patch.object(inbox, "poll_once", side_effect=poll):
+            cli._poll(self.cfg, watch=True)
+        self.assertEqual(seen, [True])
+
+    def test_watch_loop_releases_lock_on_exit(self):
+        from unittest import mock
+        import os
+        import aide.__main__ as cli
+
+        def stop(*a, **k):
+            raise KeyboardInterrupt
+
+        with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "1"}), \
+                mock.patch.object(inbox, "poll_once", side_effect=stop):
+            self.assertEqual(cli._poll(self.cfg, watch=True), 0)
+        self.assertFalse(inbox.watcher_active(self.cfg))
+
+
 class ButtonTests(unittest.TestCase):
     def test_callback_data_fits_telegram_limit_and_matches_parser(self):
         for _, data in inbox.buttons_for("abcd1234")[0]:

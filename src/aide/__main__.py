@@ -63,6 +63,9 @@ def _poll(cfg, *, watch: bool) -> int:
         log.error("poll 에는 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 가 필요합니다 (.env 확인).")
         return 2
     if not watch:
+        if inbox.watcher_active(cfg):
+            log.info("실시간 감시(poll --watch)가 켜져 있어 건너뜁니다.")
+            return 0
         try:
             n = inbox.poll_once(cfg, token=token, chat_id=chat_id)
         except (telegram.TelegramError, StateLocked) as e:
@@ -70,10 +73,14 @@ def _poll(cfg, *, watch: bool) -> int:
             return 1
         log.info("버튼 응답 %d건 처리", n)
         return 0
+    if inbox.watcher_active(cfg):
+        log.info("이미 실시간 감시가 실행 중입니다. 종료합니다.")
+        return 0
     wait = 5
     log.info("버튼 응답 대기 중... (Ctrl+C 로 종료)")
     try:
         while True:
+            inbox.touch_watcher(cfg)
             try:
                 n = inbox.poll_once(cfg, token=token, chat_id=chat_id, timeout=25)
                 wait = 5
@@ -85,7 +92,5 @@ def _poll(cfg, *, watch: bool) -> int:
                 wait = min(wait * 2, 60)
     except KeyboardInterrupt:
         return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    finally:
+        inbox.release_watcher(cfg)
