@@ -137,6 +137,12 @@ class InboxTests(unittest.TestCase):
         _, api = self.poll([press(f"d:{DID}:ok")], fail=True)
         self.assertEqual(api.cleared, [(OWNER, 77)])
 
+    def test_repeat_press_still_removes_stuck_buttons(self):
+        self.poll([press(f"d:{DID}:ok", uid=1)], fail=True)
+        _, api = self.poll([press(f"d:{DID}:ok", uid=2)])
+        self.assertEqual(api.cleared, [(OWNER, 77)])
+        self.assertEqual(api.answers[0][1], "이미 처리됐어요")
+
     def test_offset_is_persisted_and_reused(self):
         self.poll([press(f"d:{DID}:ok", uid=41)])
         _, api = self.poll([])

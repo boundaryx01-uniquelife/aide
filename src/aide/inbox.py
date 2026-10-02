@@ -76,6 +76,7 @@ def process_updates(updates: list, state: State, *, token: str, allowed_chat_id:
             continue
         cq = u["callback_query"]
         m = CALLBACK_RE.match(cq.get("data") if isinstance(cq.get("data"), str) else "")
+        outcome = None
         if not m:
             reply = "알 수 없는 버튼이에요"
         else:
@@ -89,7 +90,7 @@ def process_updates(updates: list, state: State, *, token: str, allowed_chat_id:
             api.answer_callback(token, str(cq.get("id", "")), reply)
         except telegram.TelegramError as e:
             log.info("토스트 표시 실패(오래된 버튼이면 정상, 기록은 반영됨): %s", e)
-        if m and reply in REPLIES.values():
+        if m and (outcome in REPLIES or outcome == "dup"):  # also on a repeat press: tidy up a stuck keyboard
             try:
                 api.clear_buttons(token, str(allowed_chat_id), int(cq["message"]["message_id"]))
             except (telegram.TelegramError, KeyError, TypeError, ValueError) as e:
