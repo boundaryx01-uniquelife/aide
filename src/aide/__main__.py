@@ -94,3 +94,7 @@ def _poll(cfg, *, watch: bool) -> int:
         return 0
     finally:
         inbox.release_watcher(cfg)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
