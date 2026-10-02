@@ -43,3 +43,9 @@ python -m unittest discover -s tests -v
 1. 텔레그램에서 `@BotFather` → `/newbot` → 토큰 받기
 2. 만든 봇에게 아무 메시지나 보낸 뒤 `https://api.telegram.org/bot<토큰>/getUpdates` 를 열어 `chat.id` 확인
 3. 두 값을 `.env` 에만 저장 (코드·설정 파일·채팅에 붙여넣지 말 것)
+
+## 버튼 응답 (3a)
+알림 아래의 [확인] [무시] [나중에] 버튼은 `python -m aide poll` 이 받아 기록합니다.
+- 예약 작업(`scripts\run_heartbeat.bat`)이 점검 직전에 `poll` 을 먼저 실행하므로 최대 30분 안에 반영됩니다.
+- 즉시 반영하려면 창을 하나 열어 `scripts\run_poll_watch.bat` (또는 `python -m aide poll --watch`) 를 켜 두세요.
+- 버튼은 기록만 바꿉니다. 명령 실행은 3b 에서 별도로 엽니다.

@@ -44,3 +44,7 @@
 - 2단계 LLM 판단: `collect()` 결과 중 판단이 필요한 것만 요약/초안 생성. 입력은 `clean()` 된 텍스트만.
 - 3단계 수신: 텔레그램 `getUpdates` 로 버튼/답장 처리. `chat_id` 허용 목록 필수 (SECURITY.md).
 - 4단계 코드 수정 에이전트: 브랜치 + PR 까지만. main 푸시·배포는 사람.
+
+## 수신부 (3a)
+`inbox.py` — `poll_once()` 가 `getUpdates`(callback_query 만)로 버튼 입력을 읽고 `process_updates()` 가 허용 목록 검사 후 `State.resolve_digest()` 로 기록한다.
+`state.py` 의 `locked()` 파일 잠금이 heartbeat 와 poll 의 동시 쓰기를 막는다. 네트워크 대기는 잠금 밖에서 한다.

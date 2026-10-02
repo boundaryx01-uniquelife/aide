@@ -4,14 +4,17 @@ import argparse
 import logging
 import os
 import sys
+import time
 
 from . import __version__
 from .config import ConfigError, load_config, load_dotenv
+from . import inbox, telegram
 from .heartbeat import run
+from .state import StateLocked
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog="aide", description="Proactive personal assistant (stage 1)")
+    p = argparse.ArgumentParser(prog="aide", description="Proactive personal assistant (stage 1 + button replies)")
     p.add_argument("--version", action="version", version=__version__)
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -19,6 +22,10 @@ def main(argv=None) -> int:
     hb.add_argument("--send", action="store_true", help="실제 전송 (기본은 드라이런)")
     hb.add_argument("--force", action="store_true", help="조용한 시간대에도 실행")
     hb.add_argument("--config", help="설정 파일 경로 (기본: config.json)")
+
+    pl = sub.add_parser("poll", help="텔레그램 버튼 응답을 받아 기록 (읽기 전용)")
+    pl.add_argument("--watch", action="store_true", help="계속 대기하며 즉시 처리 (Ctrl+C 로 종료)")
+    pl.add_argument("--config", help="설정 파일 경로")
 
     sc = sub.add_parser("selfcheck", help="설정과 환경 점검 (비밀값은 출력하지 않음)")
     sc.add_argument("--config", help="설정 파일 경로")
@@ -42,7 +49,42 @@ def main(argv=None) -> int:
         print(f"TELEGRAM_CHAT_ID  : {'설정됨' if os.environ.get('TELEGRAM_CHAT_ID') else '없음'}")
         return 0
 
+    if args.cmd == "poll":
+        return _poll(cfg, watch=args.watch)
+
     return run(cfg, send=args.send, force=args.force)
+
+
+def _poll(cfg, *, watch: bool) -> int:
+    log = logging.getLogger("aide.poll")
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not (token and chat_id):
+        log.error("poll 에는 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 가 필요합니다 (.env 확인).")
+        return 2
+    if not watch:
+        try:
+            n = inbox.poll_once(cfg, token=token, chat_id=chat_id)
+        except (telegram.TelegramError, StateLocked) as e:
+            log.error("%s", e)
+            return 1
+        log.info("버튼 응답 %d건 처리", n)
+        return 0
+    wait = 5
+    log.info("버튼 응답 대기 중... (Ctrl+C 로 종료)")
+    try:
+        while True:
+            try:
+                n = inbox.poll_once(cfg, token=token, chat_id=chat_id, timeout=25)
+                wait = 5
+                if n:
+                    log.info("버튼 응답 %d건 처리", n)
+            except (telegram.TelegramError, StateLocked) as e:
+                log.warning("%s - %d초 뒤 재시도", e, wait)
+                time.sleep(wait)
+                wait = min(wait * 2, 60)
+    except KeyboardInterrupt:
+        return 0
 
 
 if __name__ == "__main__":

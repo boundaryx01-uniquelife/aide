@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 from datetime import datetime, time
 from typing import Callable, List, Optional
 
-from . import telegram
+from . import inbox, telegram
 from .checks import git_dirty, news_keywords
 from .config import Config
 from .models import Finding
-from .state import State
+from .state import State, StateLocked, locked
 
 log = logging.getLogger("aide.heartbeat")
 
@@ -84,27 +85,40 @@ def run(
         log.info("조용한 시간(%s-%s): 점검만 건너뜁니다.", cfg.quiet_start, cfg.quiet_end)
         return 0
 
-    state = State(cfg.resolved_state_path())
-    new = [f for f in collect(cfg, now, fetch) if not state.is_seen(f.key)]
-    if not new:
-        log.info("새로 알릴 것이 없습니다.")  # silence is the normal case
-        return 0
-
-    digest = format_digest(new, now, cfg.max_items_per_digest)
+    path = cfg.resolved_state_path()
     if not send:
-        print(digest)
+        state = State(path)
+        new = [f for f in collect(cfg, now, fetch) if not state.is_seen(f.key)]
+        if not new:
+            log.info("새로 알릴 것이 없습니다.")  # silence is the normal case
+            return 0
+        print(format_digest(new, now, cfg.max_items_per_digest))
         log.info("드라이런: 전송하지 않았고 상태도 바꾸지 않았습니다. (--send 로 실제 전송)")
         return 0
 
+    findings = collect(cfg, now, fetch)  # slow network work stays outside the lock
     try:
-        sender(digest, token=token, chat_id=chat_id)
-    except telegram.TelegramError as e:
-        log.error("전송 실패: %s (다음 점검에서 재시도)", e)
+        with locked(path):
+            state = State(path)  # re-read inside the lock: poll may have written meanwhile
+            new = [f for f in findings if not state.is_seen(f.key)]
+            if not new:
+                log.info("새로 알릴 것이 없습니다.")
+                return 0
+            batch = new[: cfg.max_items_per_digest]
+            digest_id = secrets.token_hex(4)
+            digest = format_digest(new, now, cfg.max_items_per_digest)
+            try:
+                sender(digest, token=token, chat_id=chat_id, buttons=inbox.buttons_for(digest_id))
+            except telegram.TelegramError as e:
+                log.error("전송 실패: %s (다음 점검에서 재시도)", e)
+                return 1
+            for f in batch:
+                state.mark(f.key, now)
+            state.add_digest(digest_id, [f.key for f in batch], now)
+            state.prune(now)
+            state.save()
+            log.info("%d건 전송 완료", len(batch))
+            return 0
+    except StateLocked as e:
+        log.error("%s 다음 점검에서 다시 시도합니다.", e)
         return 1
-
-    for f in new[: cfg.max_items_per_digest]:
-        state.mark(f.key, now)
-    state.prune(now)
-    state.save()
-    log.info("%d건 전송 완료", min(len(new), cfg.max_items_per_digest))
-    return 0

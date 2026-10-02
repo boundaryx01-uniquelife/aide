@@ -51,7 +51,7 @@ class HeartbeatTests(unittest.TestCase):
     def tearDown(self):
         self.dir.cleanup()
 
-    def ok_sender(self, text, *, token, chat_id):
+    def ok_sender(self, text, *, token, chat_id, buttons=None):
         self.sent.append(text)
 
     def run_hb(self, **kw):
@@ -77,8 +77,29 @@ class HeartbeatTests(unittest.TestCase):
         self.assertEqual(self.run_hb(send=True), 0)
         self.assertEqual(len(self.sent), 1)  # same finding is not sent again
 
+    def test_send_attaches_buttons_and_registers_digest(self):
+        got = {}
+
+        def spy(text, *, token, chat_id, buttons=None):
+            got["buttons"] = buttons
+
+        self.assertEqual(self.run_hb(send=True, sender=spy), 0)
+        st = State(self.state_path)
+        self.assertEqual(len(st.digests), 1)
+        did, rec = next(iter(st.digests.items()))
+        self.assertEqual(rec["status"], "pending")
+        self.assertTrue(set(rec["keys"]) <= set(st.seen))
+        self.assertTrue(all(did in d for _, d in got["buttons"][0]))
+
+    def test_failed_send_registers_no_digest(self):
+        def boom(text, *, token, chat_id, buttons=None):
+            raise telegram.TelegramError("down")
+
+        self.run_hb(send=True, sender=boom)
+        self.assertFalse(self.state_path.exists())
+
     def test_failed_send_is_retried_and_not_marked(self):
-        def boom(text, *, token, chat_id):
+        def boom(text, *, token, chat_id, buttons=None):
             raise telegram.TelegramError("down")
 
         self.assertEqual(self.run_hb(send=True, sender=boom), 1)
