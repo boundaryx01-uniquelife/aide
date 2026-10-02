@@ -74,7 +74,7 @@ def _poll(cfg, *, watch: bool) -> int:
         log.info("버튼 응답 %d건 처리", n)
         return 0
     if inbox.watcher_active(cfg):
-        log.info("이미 실시간 감시가 실행 중입니다. 종료합니다.")
+        log.debug("이미 실시간 감시가 실행 중입니다. 종료합니다.")  # runs every minute: keep the log quiet
         return 0
     wait = 5
     log.info("버튼 응답 대기 중... (Ctrl+C 로 종료)")
