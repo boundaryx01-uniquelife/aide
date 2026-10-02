@@ -8,7 +8,7 @@ import time
 
 from . import __version__
 from .config import ConfigError, load_config, load_dotenv
-from . import inbox, telegram
+from . import inbox, morning, telegram
 from .heartbeat import run
 from .state import StateLocked
 
@@ -22,6 +22,11 @@ def main(argv=None) -> int:
     hb.add_argument("--send", action="store_true", help="실제 전송 (기본은 드라이런)")
     hb.add_argument("--force", action="store_true", help="조용한 시간대에도 실행")
     hb.add_argument("--config", help="설정 파일 경로 (기본: config.json)")
+
+    mo = sub.add_parser("morning", help="아침 인사 + 어제 작업 요약 (하루 한 번)")
+    mo.add_argument("--send", action="store_true", help="실제 전송 (기본은 미리보기)")
+    mo.add_argument("--force", action="store_true", help="조용한 시간대에도 실행")
+    mo.add_argument("--config", help="설정 파일 경로")
 
     pl = sub.add_parser("poll", help="텔레그램 버튼 응답을 받아 기록 (읽기 전용)")
     pl.add_argument("--watch", action="store_true", help="계속 대기하며 즉시 처리 (Ctrl+C 로 종료)")
@@ -48,6 +53,9 @@ def main(argv=None) -> int:
         print(f"TELEGRAM_BOT_TOKEN: {'설정됨' if os.environ.get('TELEGRAM_BOT_TOKEN') else '없음'}")
         print(f"TELEGRAM_CHAT_ID  : {'설정됨' if os.environ.get('TELEGRAM_CHAT_ID') else '없음'}")
         return 0
+
+    if args.cmd == "morning":
+        return morning.run(cfg, send=args.send, force=args.force)
 
     if args.cmd == "poll":
         return _poll(cfg, watch=args.watch)

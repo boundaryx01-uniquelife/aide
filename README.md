@@ -49,3 +49,8 @@ python -m unittest discover -s tests -v
 - 예약 작업(`scripts\run_heartbeat.bat`)이 점검 직전에 `poll` 을 먼저 실행하므로 최대 30분 안에 반영됩니다.
 - 즉시 반영하려면 창을 하나 열어 `scripts\run_poll_watch.bat` (또는 `python -m aide poll --watch`) 를 켜 두세요.
 - 버튼은 기록만 바꿉니다. 명령 실행은 3b 에서 별도로 엽니다.
+
+## 아침 인사 (1.5)
+`python -m aide morning` 은 어제 커밋 요약과 커밋 안 된 변경이 많은 폴더를 한 줄씩 보여 줍니다 (기본은 미리보기, 전송 안 함).
+`--send` 로 텔레그램에 보내며 하루에 한 번만 갑니다. 조용한 시간(기본 22:30~07:00)에는 건너뜁니다.
+PC 시작 시 자동 실행은 `scripts\register_morning.bat` (1단계가 안정된 뒤에 등록).
