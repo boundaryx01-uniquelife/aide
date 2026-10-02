@@ -1,0 +1,23 @@
+# secrets / local settings (never commit)
+.env
+config.json
+
+# runtime state and logs
+data/state.json
+data/state.json.tmp
+data/*.corrupt-*
+data/*.log
+
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# editors / os
+.vscode/
+.idea/
+Thumbs.db

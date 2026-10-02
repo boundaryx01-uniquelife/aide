@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aide"
+version = "0.1.0"
+description = "Proactive personal assistant: cheap deterministic checks first, LLM only when needed, human approval for every action."
+requires-python = ">=3.9"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]

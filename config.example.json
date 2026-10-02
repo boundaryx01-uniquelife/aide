@@ -1,0 +1,12 @@
+{
+  "watch_repos": ["C:/dev/ai-compass", "C:/dev/study-orbit"],
+  "git_dirty_threshold": 5,
+  "news_feeds": [
+    "https://news.google.com/rss/search?q=%EB%B0%9C%EB%AA%85%EA%B5%90%EC%9C%A1&hl=ko&gl=KR&ceid=KR:ko"
+  ],
+  "news_keywords": ["발명교육", "메이커교육", "3D프린터"],
+  "quiet_start": "22:30",
+  "quiet_end": "07:00",
+  "state_path": "data/state.json",
+  "max_items_per_digest": 15
+}
