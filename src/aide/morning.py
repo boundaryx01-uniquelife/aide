@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from . import telegram
+from . import gcal, google_auth, netutil, telegram, weather
 from .checks import git_dirty, yesterday
 from .config import Config
 from .heartbeat import in_quiet_hours
@@ -22,9 +22,34 @@ WEEKDAYS = "월화수목금토일"
 MAX_COMMITS_SHOWN = 5
 
 
-def build_message(cfg: Config, now: datetime) -> str:
+def _today_section(cfg: Config, now: datetime, fetch_weather, fetch_events) -> List[str]:
+    """Weather + calendar lines. Each part fails on its own and never blocks the greeting."""
+    out: List[str] = []
+    if cfg.weather_enabled:
+        try:
+            out.append(f"■ 날씨: {fetch_weather(cfg.latitude, cfg.longitude).line()}")
+        except netutil.NetError as e:
+            log.warning("날씨 조회 실패: %s", e)
+    if cfg.calendar_enabled:
+        try:
+            token = google_auth.access_token(cfg.resolved_google_client(), cfg.resolved_google_token())
+            events = fetch_events(token, now)
+            out.append("■ 오늘 일정")
+            if events:
+                out += [f"• {e.when} {e.title}" for e in events]
+            else:
+                out.append("일정이 없어요.")
+        except (google_auth.GoogleAuthError, netutil.NetError) as e:
+            log.warning("일정 조회 실패: %s", e)
+            out += ["■ 오늘 일정", "불러오지 못했어요 (로그 확인)."]
+    return out + [""] if out else out
+
+
+def build_message(cfg: Config, now: datetime, *, fetch_weather=weather.today, fetch_events=gcal.today_events) -> str:
     day = (now - timedelta(days=1)).date()
-    lines = [f"좋은 아침이에요 · {now:%m/%d}({WEEKDAYS[now.weekday()]})", "", f"■ 어제({day:%m/%d}) 작업"]
+    lines = [f"좋은 아침이에요 · {now:%m/%d}({WEEKDAYS[now.weekday()]})", ""]
+    lines += _today_section(cfg, now, fetch_weather, fetch_events)
+    lines.append(f"■ 어제({day:%m/%d}) 작업")
     any_work = False
     for repo in cfg.watch_repos:
         subjects = yesterday.commits_on(Path(repo), day)

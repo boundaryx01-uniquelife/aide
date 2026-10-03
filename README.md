@@ -64,4 +64,5 @@ python -m unittest discover -s tests -v
 ## 아침 인사 (1.5)
 `python -m aide morning` 은 어제 커밋 요약과 커밋 안 된 변경이 많은 폴더를 한 줄씩 보여 줍니다 (기본은 미리보기, 전송 안 함).
 `--send` 로 텔레그램에 보내며 하루에 한 번만 갑니다. 조용한 시간(기본 22:30~07:00)에는 건너뜁니다.
+설정 시 날씨(Open-Meteo)와 오늘 구글 캘린더 일정(읽기 전용)도 함께 보냅니다 → `docs/GOOGLE_SETUP.md`. 일정/날씨 조회가 실패해도 인사는 갑니다.
 PC 시작 시 자동 실행은 `scripts\register_morning.bat` (1단계가 안정된 뒤에 등록).

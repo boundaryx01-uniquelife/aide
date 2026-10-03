@@ -8,7 +8,7 @@ import time
 
 from . import __version__
 from .config import ConfigError, load_config, load_dotenv
-from . import inbox, morning, telegram
+from . import google_auth, inbox, morning, telegram
 from .heartbeat import run
 from .state import StateLocked
 
@@ -32,6 +32,9 @@ def main(argv=None) -> int:
     pl.add_argument("--watch", action="store_true", help="계속 대기하며 즉시 처리 (Ctrl+C 로 종료)")
     pl.add_argument("--config", help="설정 파일 경로")
 
+    gl = sub.add_parser("google-login", help="Google 캘린더 읽기 전용 로그인 (브라우저가 열립니다)")
+    gl.add_argument("--config", help="설정 파일 경로")
+
     sc = sub.add_parser("selfcheck", help="설정과 환경 점검 (비밀값은 출력하지 않음)")
     sc.add_argument("--config", help="설정 파일 경로")
 
@@ -52,6 +55,18 @@ def main(argv=None) -> int:
         print(f"state file       : {cfg.resolved_state_path()}")
         print(f"TELEGRAM_BOT_TOKEN: {'설정됨' if os.environ.get('TELEGRAM_BOT_TOKEN') else '없음'}")
         print(f"TELEGRAM_CHAT_ID  : {'설정됨' if os.environ.get('TELEGRAM_CHAT_ID') else '없음'}")
+        print(f"weather          : {'켜짐' if cfg.weather_enabled else '꺼짐'}")
+        print(f"calendar         : {'켜짐' if cfg.calendar_enabled else '꺼짐'}"
+              f" / client {'있음' if cfg.resolved_google_client().exists() else '없음'}"
+              f" / 로그인 {'됨' if cfg.resolved_google_token().exists() else '안 됨'}")
+        return 0
+
+    if args.cmd == "google-login":
+        try:
+            google_auth.login(cfg.resolved_google_client(), cfg.resolved_google_token())
+        except google_auth.GoogleAuthError as e:
+            print(f"[로그인 실패] {e}", file=sys.stderr)
+            return 1
         return 0
 
     if args.cmd == "morning":

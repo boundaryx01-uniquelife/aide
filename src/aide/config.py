@@ -24,10 +24,26 @@ class Config:
     state_path: str = "data/state.json"
     max_items_per_digest: int = 15
     news_max_age_hours: int = 36
+    weather_enabled: bool = False
+    latitude: float = 35.2      # Busan Dongnae (approx.)
+    longitude: float = 129.08
+    calendar_enabled: bool = False
+    google_client_path: str = "data/google_client.json"
+    google_token_path: str = "data/google_token.json"
 
     def resolved_state_path(self) -> Path:
-        p = Path(self.state_path)
-        return p if p.is_absolute() else ROOT / p
+        return _resolve(self.state_path)
+
+    def resolved_google_client(self) -> Path:
+        return _resolve(self.google_client_path)
+
+    def resolved_google_token(self) -> Path:
+        return _resolve(self.google_token_path)
+
+
+def _resolve(value: str) -> Path:
+    p = Path(value)
+    return p if p.is_absolute() else ROOT / p
 
 
 def load_dotenv(path: Optional[Path] = None) -> None:
@@ -63,4 +79,6 @@ def load_config(path: Optional[Path] = None) -> Config:
     cfg = Config(**data)
     if cfg.git_dirty_threshold < 1 or cfg.max_items_per_digest < 1 or cfg.news_max_age_hours < 1:
         raise ConfigError("git_dirty_threshold / max_items_per_digest / news_max_age_hours 는 1 이상이어야 합니다.")
+    if not (-90 <= cfg.latitude <= 90 and -180 <= cfg.longitude <= 180):
+        raise ConfigError("latitude / longitude 범위가 올바르지 않습니다.")
     return cfg

@@ -22,3 +22,8 @@ dist/
 .idea/
 Thumbs.db
 data/*.lock
+
+# Google OAuth (secrets)
+data/google_client.json
+data/google_token.json
+data/google_token.json.tmp
