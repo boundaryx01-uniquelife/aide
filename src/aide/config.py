@@ -23,6 +23,7 @@ class Config:
     quiet_end: str = "07:00"
     state_path: str = "data/state.json"
     max_items_per_digest: int = 15
+    news_max_age_hours: int = 36
 
     def resolved_state_path(self) -> Path:
         p = Path(self.state_path)
@@ -60,6 +61,6 @@ def load_config(path: Optional[Path] = None) -> Config:
     if unknown:
         raise ConfigError(f"알 수 없는 설정 키: {sorted(unknown)}")
     cfg = Config(**data)
-    if cfg.git_dirty_threshold < 1 or cfg.max_items_per_digest < 1:
-        raise ConfigError("git_dirty_threshold / max_items_per_digest 는 1 이상이어야 합니다.")
+    if cfg.git_dirty_threshold < 1 or cfg.max_items_per_digest < 1 or cfg.news_max_age_hours < 1:
+        raise ConfigError("git_dirty_threshold / max_items_per_digest / news_max_age_hours 는 1 이상이어야 합니다.")
     return cfg

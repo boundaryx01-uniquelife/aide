@@ -32,10 +32,20 @@ def in_quiet_hours(now: datetime, start: str, end: str) -> bool:
     return t >= s or t < e
 
 
+def _keys(f: Finding):
+    return (f.key, *f.alt_keys)
+
+
+def _is_new(state: State, f: Finding) -> bool:
+    return not any(state.is_seen(k) for k in _keys(f))
+
+
 def collect(cfg: Config, now: datetime, fetch=news_keywords.fetch_feed) -> List[Finding]:
     findings: List[Finding] = []
     findings += git_dirty.check(cfg.watch_repos, cfg.git_dirty_threshold, now.date())
-    findings += news_keywords.check(cfg.news_feeds, cfg.news_keywords, fetch)
+    findings += news_keywords.check(
+        cfg.news_feeds, cfg.news_keywords, fetch, now=now, max_age_hours=cfg.news_max_age_hours
+    )
     return findings
 
 
@@ -88,7 +98,7 @@ def run(
     path = cfg.resolved_state_path()
     if not send:
         state = State(path)
-        new = [f for f in collect(cfg, now, fetch) if not state.is_seen(f.key)]
+        new = [f for f in collect(cfg, now, fetch) if _is_new(state, f)]
         if not new:
             log.info("새로 알릴 것이 없습니다.")  # silence is the normal case
             return 0
@@ -100,7 +110,7 @@ def run(
     try:
         with locked(path):
             state = State(path)  # re-read inside the lock: poll may have written meanwhile
-            new = [f for f in findings if not state.is_seen(f.key)]
+            new = [f for f in findings if _is_new(state, f)]
             if not new:
                 log.info("새로 알릴 것이 없습니다.")
                 return 0
@@ -112,9 +122,10 @@ def run(
             except telegram.TelegramError as e:
                 log.error("전송 실패: %s (다음 점검에서 재시도)", e)
                 return 1
-            for f in batch:
-                state.mark(f.key, now)
-            state.add_digest(digest_id, [f.key for f in batch], now)
+            all_keys = [k for f in batch for k in _keys(f)]
+            for k in all_keys:
+                state.mark(k, now)
+            state.add_digest(digest_id, all_keys, now)
             state.prune(now)
             state.save()
             log.info("%d건 전송 완료", len(batch))

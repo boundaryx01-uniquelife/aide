@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Tuple
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
@@ -25,6 +26,8 @@ class Finding:
     detail   optional extra line
     url      optional link
     priority 1 normal, 2 high (reserved for later stages)
+    alt_keys extra ids for the SAME item (e.g. a normalized headline). The item counts as
+             already seen if ANY of key/alt_keys was reported; reporting marks all of them.
     """
 
     key: str
@@ -33,3 +36,4 @@ class Finding:
     detail: str = ""
     url: str = ""
     priority: int = 1
+    alt_keys: Tuple[str, ...] = ()

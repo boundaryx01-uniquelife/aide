@@ -6,7 +6,9 @@ import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from typing import Callable, Iterable, List
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+from typing import Callable, Iterable, List, Optional
 
 from ..models import Finding, clean
 
@@ -26,6 +28,7 @@ class FeedItem:
     link: str
     guid: str
     summary: str
+    published: str = ""  # raw date text from the feed; see parse_date()
 
 
 def fetch_feed(url: str) -> bytes:
@@ -85,6 +88,7 @@ def parse_feed(data: bytes) -> List[FeedItem]:
                 link=_link(el),
                 guid=_text(el, "guid") or _text(el, "id"),
                 summary=summary,
+                published=_text(el, "pubDate") or _text(el, "published") or _text(el, "updated") or _text(el, "date"),
             )
         )
     return items
@@ -95,17 +99,56 @@ def match(item: FeedItem, keywords: Iterable[str]) -> List[str]:
     return [k for k in keywords if k and k.lower() in hay]
 
 
+def parse_date(text: str) -> Optional[datetime]:
+    """Feed date (RSS RFC-822 or Atom ISO-8601) as an aware datetime, or None if unreadable.
+    A date without a time zone is taken as local time."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        dt = parsedate_to_datetime(text)
+    except (TypeError, ValueError, IndexError):
+        try:
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return dt.astimezone(timezone.utc) if dt.tzinfo else dt.astimezone().astimezone(timezone.utc)
+
+
+_SOURCE_SUFFIX = re.compile(r"\s+[-\u2013\u2014|]\s+([^-\u2013\u2014|]{1,30})$")
+
+
+def normalize_title(title: str) -> str:
+    """Headline reduced to its letters/digits, without the trailing " - outlet" that
+    Google News appends, so the same headline from two outlets compares equal."""
+    t = _SOURCE_SUFFIX.sub("", (title or "").strip())
+    return re.sub(r"[\W_]+", "", t).lower()
+
+
 def check(
     feeds: Iterable[str],
     keywords: Iterable[str],
     fetch: Callable[[str], bytes] = fetch_feed,
+    now: Optional[datetime] = None,
+    max_age_hours: Optional[int] = None,
 ) -> List[Finding]:
-    """One finding per matching article. The key is the article id/link, so an
-    article is reported once, ever (until the state entry is pruned)."""
+    """One finding per matching article, newest first.
+
+    - age: with `now` and `max_age_hours`, articles older than that are skipped; articles
+      whose date cannot be read are kept (nothing to judge them by);
+    - duplicates: the same article (id/link) or the same normalized headline appears once
+      per run, and the headline is also stored as an alt key so a re-post by another
+      outlet is not reported again later.
+    """
     keywords = [k for k in keywords if k]
-    findings: List[Finding] = []
     if not keywords:
-        return findings
+        return []
+    cutoff = None
+    if now is not None and max_age_hours:
+        cutoff = now.astimezone(timezone.utc) - timedelta(hours=max_age_hours)
+    seen_keys, seen_titles = set(), set()
+    found = []  # (published or None, Finding)
+    too_old = dups = 0
     for url in feeds:
         try:
             items = parse_feed(fetch(url))
@@ -116,14 +159,34 @@ def check(
             hit = match(item, keywords)
             if not hit:
                 continue
+            published = parse_date(item.published)
+            if cutoff is not None and published is not None and published < cutoff:
+                too_old += 1
+                continue
             ident = item.guid or item.link or item.title
-            findings.append(
-                Finding(
-                    key=f"news:{ident}",
-                    source="news",
-                    title=clean(item.title) or "(제목 없음)",
-                    detail=clean("키워드: " + ", ".join(hit), 120),
-                    url=clean(item.link, 500),
+            key = f"news:{ident}"
+            norm = normalize_title(item.title)
+            if key in seen_keys or (norm and norm in seen_titles):
+                dups += 1
+                continue
+            seen_keys.add(key)
+            if norm:
+                seen_titles.add(norm)
+            found.append(
+                (
+                    published,
+                    Finding(
+                        key=key,
+                        source="news",
+                        title=clean(item.title) or "(제목 없음)",
+                        detail=clean("키워드: " + ", ".join(hit), 120),
+                        url=clean(item.link, 500),
+                        alt_keys=(f"newstitle:{norm}",) if norm else (),
+                    ),
                 )
             )
-    return findings
+    if too_old or dups:
+        log.info("뉴스: 오래된 기사 %d건, 중복 %d건 제외", too_old, dups)
+    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    found.sort(key=lambda pf: pf[0] or epoch, reverse=True)  # stable: undated keep feed order, last
+    return [f for _, f in found]

@@ -8,5 +8,6 @@
   "quiet_start": "22:30",
   "quiet_end": "07:00",
   "state_path": "data/state.json",
-  "max_items_per_digest": 15
+  "max_items_per_digest": 15,
+  "news_max_age_hours": 36
 }
