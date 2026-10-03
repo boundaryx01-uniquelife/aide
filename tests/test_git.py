@@ -48,5 +48,23 @@ class GitDirtyTests(unittest.TestCase):
         self.assertNotEqual(a, b)
 
 
+class NoLockTests(unittest.TestCase):
+    def test_status_does_not_take_the_index_lock(self):
+        from unittest import mock
+
+        seen = {}
+        real = subprocess.run
+
+        def spy(cmd, *a, **k):
+            seen["cmd"] = cmd
+            return real(cmd, *a, **k)
+
+        with tempfile.TemporaryDirectory() as d:
+            repo = make_repo(Path(d) / "r", 1)
+            with mock.patch.object(git_dirty.subprocess, "run", spy):
+                git_dirty.count_changes(repo)
+        self.assertIn("--no-optional-locks", seen["cmd"])
+
+
 if __name__ == "__main__":
     unittest.main()

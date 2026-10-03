@@ -15,7 +15,7 @@ def count_changes(repo: Path) -> Optional[int]:
     """Number of uncommitted entries (modified + untracked). None if not a usable repo."""
     try:
         proc = subprocess.run(
-            ["git", "-C", str(repo), "status", "--porcelain"],
+            ["git", "--no-optional-locks", "-C", str(repo), "status", "--porcelain"],
             capture_output=True,
             text=True,
             encoding="utf-8",

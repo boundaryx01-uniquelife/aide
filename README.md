@@ -60,3 +60,8 @@ python -m unittest discover -s tests -v
 - `data\aide.log`: 30분 점검(알림, 아침 인사)의 기록
 - `data\poll_watch.log`: 버튼 즉시 감시의 기록 (감시가 파일을 계속 열어 두므로 분리)
 둘 다 UTF-8 입니다. PowerShell 에서는 `Get-Content data\aide.log -Tail 20 -Encoding UTF8` 로 읽으세요.
+
+## 아침 인사 (1.5)
+`python -m aide morning` 은 어제 커밋 요약과 커밋 안 된 변경이 많은 폴더를 한 줄씩 보여 줍니다 (기본은 미리보기, 전송 안 함).
+`--send` 로 텔레그램에 보내며 하루에 한 번만 갑니다. 조용한 시간(기본 22:30~07:00)에는 건너뜁니다.
+PC 시작 시 자동 실행은 `scripts\register_morning.bat` (1단계가 안정된 뒤에 등록).
