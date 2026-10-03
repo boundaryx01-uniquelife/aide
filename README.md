@@ -47,7 +47,7 @@ python -m unittest discover -s tests -v
 ## 버튼 응답 (3a)
 알림 아래의 [확인] [무시] [나중에] 버튼은 `python -m aide poll` 이 받아 기록합니다.
 - 예약 작업(`scripts\run_heartbeat.bat`)이 점검 직전에 `poll` 을 먼저 실행하므로 최대 30분 안에 반영됩니다.
-- 즉시 반영하려면 창을 하나 열어 `scripts\run_poll_watch.bat` (또는 `python -m aide poll --watch`) 를 켜 두세요.
+- 즉시 반영하려면 `scripts\register_poll_watch.bat` 로 백그라운드 감시를 등록하세요(창 없이, 관리자 권한 불필요, 꺼지면 1분 안에 자동 재시작). 지금 바로 켜려면 `schtasks /Run /TN "aide-poll-watch"`. 감시가 켜져 있으면 예약된 `poll` 은 자동으로 건너뜁니다(텔레그램은 동시에 한 곳만 읽을 수 있음).
 - 버튼은 기록만 바꿉니다. 명령 실행은 3b 에서 별도로 엽니다.
 
 ## 뉴스 선정 기준
@@ -56,3 +56,7 @@ python -m unittest discover -s tests -v
 3. 발행 시각이 `news_max_age_hours`(기본 36)보다 오래된 기사는 제외합니다. 날짜를 읽을 수 없는 기사는 제외하지 않습니다.
 4. 같은 기사(ID/주소)와, 매체명을 뗀 제목이 같은 기사는 한 번만 보냅니다. 다른 매체가 같은 제목으로 다시 내도 보내지 않습니다. 표현이 조금이라도 다르면 다른 기사로 봅니다.
 5. 새 기사 순서로(최신 먼저) 한 번에 `max_items_per_digest` 건까지 보냅니다.
+## 로그 파일
+- `data\aide.log`: 30분 점검(알림, 아침 인사)의 기록
+- `data\poll_watch.log`: 버튼 즉시 감시의 기록 (감시가 파일을 계속 열어 두므로 분리)
+둘 다 UTF-8 입니다. PowerShell 에서는 `Get-Content data\aide.log -Tail 20 -Encoding UTF8` 로 읽으세요.

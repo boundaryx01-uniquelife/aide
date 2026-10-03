@@ -8,7 +8,9 @@ messages are never requested from Telegram at all.
 from __future__ import annotations
 
 import logging
+import os
 import re
+import time
 
 from . import telegram
 from .config import Config
@@ -22,6 +24,38 @@ REPLIES = {
     "skip": "무시할게요",
     "later": "다음 점검 때 다시 알려드릴게요",
 }
+
+
+WATCH_FRESH = 150.0  # seconds; the watch loop touches its lock at least every ~85 s (25 s wait + 60 s backoff)
+
+
+def _watch_lock(cfg: Config):
+    return cfg.resolved_state_path().with_name("poll_watch.lock")
+
+
+def watcher_active(cfg: Config) -> bool:
+    """True while a `poll --watch` loop is alive (its lock file was touched recently).
+
+    Telegram allows only one getUpdates reader at a time (a second one makes the first
+    fail with 409), so the scheduled one-shot poll and any second watcher stand down.
+    """
+    try:
+        return time.time() - _watch_lock(cfg).stat().st_mtime < WATCH_FRESH
+    except OSError:
+        return False
+
+
+def touch_watcher(cfg: Config) -> None:
+    lock = _watch_lock(cfg)
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(str(os.getpid()), encoding="utf-8")
+
+
+def release_watcher(cfg: Config) -> None:
+    try:
+        _watch_lock(cfg).unlink()
+    except OSError:
+        pass
 
 
 def buttons_for(digest_id: str):
