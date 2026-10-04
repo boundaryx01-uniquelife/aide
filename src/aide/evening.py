@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -21,18 +21,38 @@ log = logging.getLogger("aide.evening")
 WEEKDAYS = "월화수목금토일"
 MAX_COMMITS_SHOWN = 3
 DEADLINE_DAYS = 3
+WEEK_DEADLINE_DAYS = 7
+SUNDAY = 6
 
 
-def _tomorrow_section(cfg: Config, now: datetime, fetch_events) -> List[str]:
+def _is_weekly(now: datetime) -> bool:
+    return now.weekday() == SUNDAY  # Sunday evening: brief the whole coming week
+
+
+def _calendar_section(cfg: Config, now: datetime, fetch_events, fetch_week) -> List[str]:
     if not cfg.calendar_enabled:
         return []
-    out = ["■ 내일 일정"]
+    weekly = _is_weekly(now)
+    first = (now + timedelta(days=1)).date()
+    title = f"■ 다음 주 일정 ({first:%m/%d}~{first + timedelta(days=6):%m/%d})" if weekly else "■ 내일 일정"
+    out = [title]
     try:
         token = google_auth.access_token(cfg.resolved_google_client(), cfg.resolved_google_token())
-        events = fetch_events(token, now + timedelta(days=1))
-        out += [f"• {e.when} {e.title}" for e in events] or ["일정이 없어요."]
+        if weekly:
+            events = fetch_week(token, first, 7)
+            if not events:
+                out.append("일정이 없어요.")
+            last: Optional[date] = None
+            for e in events:
+                if e.day != last:
+                    last = e.day
+                    out.append(f"{e.day:%m/%d}({WEEKDAYS[e.day.weekday()]})" if e.day else "")
+                out.append(f"  • {e.when} {e.title}")
+        else:
+            events = fetch_events(token, now + timedelta(days=1))
+            out += [f"• {e.when} {e.title}" for e in events] or ["일정이 없어요."]
     except (google_auth.GoogleAuthError, netutil.NetError) as e:
-        log.warning("내일 일정 조회 실패: %s", e)
+        log.warning("일정 조회 실패: %s", e)
         out.append("불러오지 못했어요 (로그 확인).")
     return out + [""]
 
@@ -40,16 +60,17 @@ def _tomorrow_section(cfg: Config, now: datetime, fetch_events) -> List[str]:
 def _deadline_section(cfg: Config, now: datetime, fetch) -> List[str]:
     if not cfg.notice_pages:
         return []
-    rows = notice_pages.upcoming(cfg.notice_pages, cfg.notice_keywords, fetch, now, DEADLINE_DAYS)
-    out = [f"■ 마감 임박 ({DEADLINE_DAYS}일 이내)"]
+    days = WEEK_DEADLINE_DAYS if _is_weekly(now) else DEADLINE_DAYS
+    rows = notice_pages.upcoming(cfg.notice_pages, cfg.notice_keywords, fetch, now, days)
+    out = [f"■ 마감 임박 ({days}일 이내)"]
     out += [f"• D-{left} {title} (~{due:%m/%d})" for title, due, left, _ in rows] or ["없어요."]
     return out + [""]
 
 
 def build_message(cfg: Config, now: datetime, *, fetch_events=gcal.today_events,
-                  fetch=news_keywords.fetch_feed) -> str:
+                  fetch=news_keywords.fetch_feed, fetch_week=gcal.events_between) -> str:
     lines = [f"저녁 정리 · {now:%m/%d}({WEEKDAYS[now.weekday()]})", ""]
-    lines += _tomorrow_section(cfg, now, fetch_events)
+    lines += _calendar_section(cfg, now, fetch_events, fetch_week)
     lines += _deadline_section(cfg, now, fetch)
 
     lines.append("■ 오늘 작업")
@@ -78,7 +99,7 @@ def build_message(cfg: Config, now: datetime, *, fetch_events=gcal.today_events,
 
 def run(cfg: Config, *, send: bool = False, force: bool = False, now: Optional[datetime] = None,
         sender: Callable[..., None] = telegram.send, fetch=news_keywords.fetch_feed,
-        fetch_events=gcal.today_events) -> int:
+        fetch_events=gcal.today_events, fetch_week=gcal.events_between) -> int:
     """Exit codes: 0 ok (including 'not time yet' / 'already sent'), 1 send failed, 2 setup problem.
 
     Dry run (default) prints the message and changes nothing. With --send the day is
@@ -96,7 +117,7 @@ def run(cfg: Config, *, send: bool = False, force: bool = False, now: Optional[d
 
     key = f"evening:{now.date().isoformat()}"
     path = cfg.resolved_state_path()
-    message = lambda: build_message(cfg, now, fetch_events=fetch_events, fetch=fetch)  # noqa: E731
+    message = lambda: build_message(cfg, now, fetch_events=fetch_events, fetch=fetch, fetch_week=fetch_week)  # noqa: E731
 
     if not send:
         print(message())

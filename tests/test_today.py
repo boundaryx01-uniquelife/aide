@@ -32,6 +32,7 @@ class GcalTests(unittest.TestCase):
         self.assertIn("orderBy=startTime", url)
         self.assertIn("timeMin=2026-10-03T00%3A00%3A00%2B09%3A00", url)
         self.assertIn("timeMax=2026-10-04T00%3A00%3A00%2B09%3A00", url)
+        self.assertIn("maxResults=20", url)
 
     def test_parsing_sorting_and_filtering(self):
         items = [
@@ -60,6 +61,45 @@ class GcalTests(unittest.TestCase):
     def test_odd_payloads(self):
         self.assertEqual(gcal.today_events("T", NOW, get=lambda *a, **k: []), [])
         self.assertEqual(gcal.today_events("T", NOW, get=lambda *a, **k: {"items": ["x", 3]}), [])
+
+
+class EventsBetweenTests(unittest.TestCase):
+    def run_it(self, items, first=None, days=7):
+        from datetime import date
+        calls = []
+
+        def get(url, headers=None):
+            calls.append(url)
+            return {"items": items}
+        return gcal.events_between("T", first or date(2026, 10, 5), days, get=get), calls
+
+    def test_range_and_ordering(self):
+        items = [
+            ev(summary="수 연수", start={"dateTime": "2026-10-07T14:00:00+09:00"}),
+            ev(summary="월 회의", start={"dateTime": "2026-10-05T09:30:00+09:00"}),
+            ev(summary="월 종일", start={"date": "2026-10-05"}),
+            ev(summary="화 아침", start={"dateTime": "2026-10-05T23:30:00Z"}),   # 10/06 08:30 KST
+            ev(summary="깨진 날짜", start={"date": "2026-13-45"}),
+        ]
+        events, calls = self.run_it(items)
+        self.assertEqual([(str(e.day), e.when, e.title) for e in events], [
+            ("2026-10-05", "종일", "월 종일"), ("2026-10-05", "09:30", "월 회의"),
+            ("2026-10-06", "08:30", "화 아침"), ("2026-10-07", "14:00", "수 연수")])
+        self.assertIn("timeMin=2026-10-05T00%3A00%3A00%2B09%3A00", calls[0])
+        self.assertIn("timeMax=2026-10-12T00%3A00%3A00%2B09%3A00", calls[0])
+        self.assertIn("maxResults=50", calls[0])
+
+    def test_multiday_event_started_earlier_is_shown_on_first_day(self):
+        events, _ = self.run_it([ev(summary="연수 주간", start={"date": "2026-10-01"})])
+        self.assertEqual(str(events[0].day), "2026-10-05")
+
+    def test_days_parameter_sets_window(self):
+        _, calls = self.run_it([], days=3)
+        self.assertIn("timeMax=2026-10-08T00%3A00%3A00%2B09%3A00", calls[0])
+
+    def test_event_day_is_set_by_today_events_too(self):
+        evs = gcal.today_events("T", NOW, get=lambda *a, **k: {"items": [ev(summary="x", start={"date": "2026-10-03"})]})
+        self.assertEqual(str(evs[0].day), "2026-10-03")
 
 
 class WeatherTests(unittest.TestCase):

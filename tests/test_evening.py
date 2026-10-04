@@ -14,6 +14,7 @@ from aide.config import Config, ConfigError, load_config
 from aide.state import State
 
 NOW = datetime(2026, 10, 4, 20, 5)   # Sunday
+SAT = datetime(2026, 10, 3, 20, 5)   # Saturday (ordinary evening)
 PAGE = "https://example.go.kr/list"
 HTML = """<table>
 <tr><td><a href="/1">공모 사업 신청 안내 (곧 마감)</a></td><td>2026-09-30 ~ 2026-10-06</td></tr>
@@ -51,12 +52,12 @@ class BuildTests(unittest.TestCase):
     def cfg(self, **kw):
         return Config(watch_repos=["C:/x/proj-a", "C:/x/proj-b"], **kw)
 
-    def build(self, cfg, commits=None, dirty=None, events=None, **kw):
+    def build(self, cfg, commits=None, dirty=None, events=None, now=None, **kw):
         commits = commits or {}
         with mock.patch.object(yesterday, "commits_on", lambda repo, day: commits.get(Path(repo).name)), \
              mock.patch.object(git_dirty, "count_changes", lambda repo: (dirty or {}).get(Path(repo).name)), \
              mock.patch.object(ga, "access_token", return_value="T"):
-            return evening.build_message(cfg, NOW, fetch_events=lambda t, n: events if events is not None else [],
+            return evening.build_message(cfg, now or NOW, fetch_events=lambda t, n: events if events is not None else [],
                                          fetch=fetch, **kw)
 
     def test_minimal_message(self):
@@ -88,30 +89,98 @@ class BuildTests(unittest.TestCase):
         with mock.patch.object(yesterday, "commits_on", lambda r, d: []), \
              mock.patch.object(git_dirty, "count_changes", lambda r: None), \
              mock.patch.object(ga, "access_token", return_value="T"):
-            m = evening.build_message(self.cfg(calendar_enabled=True), NOW, fetch=fetch,
+            m = evening.build_message(self.cfg(calendar_enabled=True), SAT, fetch=fetch,
                                       fetch_events=lambda t, n: got.append(n.date().isoformat()) or [gcal.Event("09:30", "회의")])
-        self.assertEqual(got, ["2026-10-05"])
+        self.assertEqual(got, ["2026-10-04"])
         self.assertIn("■ 내일 일정", m)
         self.assertIn("• 09:30 회의", m)
 
     def test_no_events_and_failures_degrade(self):
-        m = self.build(self.cfg(calendar_enabled=True), events=[])
+        m = self.build(self.cfg(calendar_enabled=True), events=[], now=SAT)
         self.assertIn("일정이 없어요.", m)
         with mock.patch.object(ga, "access_token", side_effect=ga.GoogleAuthError("x")), \
              mock.patch.object(yesterday, "commits_on", lambda r, d: []), mock.patch.object(git_dirty, "count_changes", lambda r: None):
-            m = evening.build_message(self.cfg(calendar_enabled=True), NOW, fetch=fetch)
+            m = evening.build_message(self.cfg(calendar_enabled=True), SAT, fetch=fetch)
         self.assertIn("불러오지 못했어요", m)
         self.assertIn("오늘 작업", m)
 
     def test_deadline_section(self):
-        m = self.build(self.cfg(notice_pages=[PAGE], notice_keywords=["공모", "연수"]))
+        m = self.build(self.cfg(notice_pages=[PAGE], notice_keywords=["공모", "연수"]), now=SAT)
         self.assertIn("마감 임박 (3일 이내)", m)
-        self.assertIn("• D-1 연수 안내 공고 (내일 마감) (~10/05)", m)
-        self.assertIn("• D-2 공모 사업 신청 안내 (곧 마감) (~10/06)", m)
-        self.assertLess(m.index("D-1"), m.index("D-2"))
+        self.assertIn("• D-2 연수 안내 공고 (내일 마감) (~10/05)", m)
+        self.assertIn("• D-3 공모 사업 신청 안내 (곧 마감) (~10/06)", m)
+        self.assertLess(m.index("D-2"), m.index("D-3"))
         self.assertNotIn("여유 있음", m)
-        m = self.build(self.cfg(notice_pages=[PAGE], notice_keywords=["zzz"]))
+        m = self.build(self.cfg(notice_pages=[PAGE], notice_keywords=["zzz"]), now=SAT)
         self.assertIn("없어요.", m)
+
+
+import datetime as _dt
+
+D = lambda d: _dt.date(2026, 10, d)
+
+
+class WeeklyTests(unittest.TestCase):
+    def cfg(self, **kw):
+        return Config(**kw)
+
+    def build(self, cfg, week=None, now=NOW, **kw):
+        calls = []
+
+        def fw(token, first, days):
+            calls.append((token, first, days))
+            return week if week is not None else []
+        with mock.patch.object(yesterday, "commits_on", lambda r, d: []), \
+             mock.patch.object(git_dirty, "count_changes", lambda r: None), \
+             mock.patch.object(ga, "access_token", return_value="T"):
+            m = evening.build_message(cfg, now, fetch=fetch, fetch_week=fw,
+                                      fetch_events=lambda t, n: self.fail("daily path used on Sunday"), **kw)
+        return m, calls
+
+    def test_sunday_briefs_next_week_grouped_by_day(self):
+        week = [gcal.Event("종일", "워크숍", D(5)), gcal.Event("09:30", "회의", D(5)), gcal.Event("14:00", "연수", D(7))]
+        m, calls = self.build(self.cfg(calendar_enabled=True), week)
+        self.assertEqual(calls, [("T", D(5), 7)])
+        self.assertIn("■ 다음 주 일정 (10/05~10/11)", m)
+        self.assertIn("10/05(월)\n  • 종일 워크숍\n  • 09:30 회의\n10/07(수)\n  • 14:00 연수", m)
+        self.assertNotIn("내일 일정", m)
+
+    def test_sunday_empty_and_failure(self):
+        m, _ = self.build(self.cfg(calendar_enabled=True), [])
+        self.assertIn("다음 주 일정", m)
+        self.assertIn("일정이 없어요.", m)
+
+        def bad(*a):
+            raise netutil.NetError("x")
+        with mock.patch.object(yesterday, "commits_on", lambda r, d: []), mock.patch.object(git_dirty, "count_changes", lambda r: None), \
+             mock.patch.object(ga, "access_token", return_value="T"):
+            m = evening.build_message(self.cfg(calendar_enabled=True), NOW, fetch=fetch, fetch_week=bad)
+        self.assertIn("불러오지 못했어요", m)
+        self.assertIn("오늘 작업", m)
+
+    def test_other_days_stay_daily(self):
+        for now in (SAT, datetime(2026, 10, 5, 20, 0), datetime(2026, 10, 10, 20, 0)):
+            self.assertFalse(evening._is_weekly(now))
+        self.assertTrue(evening._is_weekly(NOW))
+        with mock.patch.object(yesterday, "commits_on", lambda r, d: []), mock.patch.object(git_dirty, "count_changes", lambda r: None), \
+             mock.patch.object(ga, "access_token", return_value="T"):
+            m = evening.build_message(self.cfg(calendar_enabled=True), SAT, fetch=fetch,
+                                      fetch_events=lambda t, n: [], fetch_week=lambda *a: self.fail("weekly path used"))
+        self.assertIn("내일 일정", m)
+
+    def test_sunday_deadline_window_is_a_week(self):
+        m, _ = self.build(self.cfg(notice_pages=[PAGE], notice_keywords=["공모", "연수"]))
+        self.assertIn("마감 임박 (7일 이내)", m)
+        html = HTML.replace("2026-10-30", "2026-10-11")   # D-7: inside the weekly window
+        with mock.patch.object(yesterday, "commits_on", lambda r, d: []), mock.patch.object(git_dirty, "count_changes", lambda r: None):
+            m = evening.build_message(self.cfg(notice_pages=[PAGE], notice_keywords=["공모", "연수"]), NOW,
+                                      fetch=lambda u: html.encode())
+        self.assertIn("여유 있음", m)
+        html = HTML.replace("2026-10-30", "2026-10-12")   # D-8: outside
+        with mock.patch.object(yesterday, "commits_on", lambda r, d: []), mock.patch.object(git_dirty, "count_changes", lambda r: None):
+            m = evening.build_message(self.cfg(notice_pages=[PAGE], notice_keywords=["공모", "연수"]), NOW,
+                                      fetch=lambda u: html.encode())
+        self.assertNotIn("여유 있음", m)
 
 
 class RunTests(unittest.TestCase):
