@@ -35,6 +35,10 @@ def main(argv=None) -> int:
     gl = sub.add_parser("google-login", help="Google 캘린더 읽기 전용 로그인 (브라우저가 열립니다)")
     gl.add_argument("--config", help="설정 파일 경로")
 
+    nt = sub.add_parser("notices", help="공지 페이지 감시 시험: 상태·전송 없이 찾은 항목만 출력")
+    nt.add_argument("url", nargs="?", help="한 페이지만 시험 (생략하면 config 의 notice_pages 전체)")
+    nt.add_argument("--config", help="설정 파일 경로")
+
     sc = sub.add_parser("selfcheck", help="설정과 환경 점검 (비밀값은 출력하지 않음)")
     sc.add_argument("--config", help="설정 파일 경로")
 
@@ -59,6 +63,26 @@ def main(argv=None) -> int:
         print(f"calendar         : {'켜짐' if cfg.calendar_enabled else '꺼짐'}"
               f" / client {'있음' if cfg.resolved_google_client().exists() else '없음'}"
               f" / 로그인 {'됨' if cfg.resolved_google_token().exists() else '안 됨'}")
+        return 0
+
+    if args.cmd == "notices":
+        from datetime import datetime
+        from .checks import news_keywords, notice_pages
+        pages = [args.url] if args.url else cfg.notice_pages
+        if not pages:
+            print("notice_pages 가 비어 있습니다 (config.json) 또는 주소를 인자로 주세요.")
+            return 2
+        for page in pages:
+            try:
+                n = len(notice_pages.parse_items(notice_pages.decode(news_keywords.fetch_feed(page))))
+            except Exception as e:  # noqa: BLE001
+                print(f"[{page}] 가져오기 실패: {type(e).__name__}")
+                continue
+            found = notice_pages.check([page], cfg.notice_keywords, news_keywords.fetch_feed,
+                                       datetime.now(), cfg.notice_max_per_page)
+            print(f"[{page}] 링크 {n}개 중 {len(found)}건 선택")
+            for f in found:
+                print(f"  • {f.title}" + (f"  ({f.detail})" if f.detail else ""))
         return 0
 
     if args.cmd == "google-login":

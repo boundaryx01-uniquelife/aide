@@ -24,6 +24,10 @@ class Config:
     state_path: str = "data/state.json"
     max_items_per_digest: int = 15
     news_max_age_hours: int = 36
+    notice_pages: List[str] = field(default_factory=list)
+    notice_keywords: List[str] = field(default_factory=lambda: [
+        "공모", "모집", "신청", "접수", "연수", "공고", "대회", "전시회", "지원사업", "발명", "메이커"])
+    notice_max_per_page: int = 5
     weather_enabled: bool = False
     latitude: float = 35.2      # Busan Dongnae (approx.)
     longitude: float = 129.08
@@ -77,7 +81,7 @@ def load_config(path: Optional[Path] = None) -> Config:
     if unknown:
         raise ConfigError(f"알 수 없는 설정 키: {sorted(unknown)}")
     cfg = Config(**data)
-    if cfg.git_dirty_threshold < 1 or cfg.max_items_per_digest < 1 or cfg.news_max_age_hours < 1:
+    if cfg.git_dirty_threshold < 1 or cfg.max_items_per_digest < 1 or cfg.news_max_age_hours < 1 or cfg.notice_max_per_page < 1:
         raise ConfigError("git_dirty_threshold / max_items_per_digest / news_max_age_hours 는 1 이상이어야 합니다.")
     if not (-90 <= cfg.latitude <= 90 and -180 <= cfg.longitude <= 180):
         raise ConfigError("latitude / longitude 범위가 올바르지 않습니다.")

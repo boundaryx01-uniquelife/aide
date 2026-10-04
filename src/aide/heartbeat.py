@@ -7,14 +7,14 @@ from datetime import datetime, time
 from typing import Callable, List, Optional
 
 from . import inbox, telegram
-from .checks import git_dirty, news_keywords
+from .checks import git_dirty, news_keywords, notice_pages
 from .config import Config
 from .models import Finding
 from .state import State, StateLocked, locked
 
 log = logging.getLogger("aide.heartbeat")
 
-SOURCE_LABELS = {"git": "작업 폴더", "news": "뉴스 키워드"}
+SOURCE_LABELS = {"git": "작업 폴더", "news": "뉴스 키워드", "notice": "기관 공지·마감"}
 
 
 def parse_hhmm(value: str) -> time:
@@ -46,13 +46,16 @@ def collect(cfg: Config, now: datetime, fetch=news_keywords.fetch_feed) -> List[
     findings += news_keywords.check(
         cfg.news_feeds, cfg.news_keywords, fetch, now=now, max_age_hours=cfg.news_max_age_hours
     )
+    findings += notice_pages.check(
+        cfg.notice_pages, cfg.notice_keywords, fetch, now, cfg.notice_max_per_page
+    )
     return findings
 
 
 def format_digest(findings: List[Finding], now: datetime, limit: int) -> str:
     shown, rest = findings[:limit], max(0, len(findings) - limit)
     lines = [f"[aide] 알림 {len(findings)}건 · {now:%m/%d %H:%M}"]
-    for source in ("git", "news"):
+    for source in ("notice", "git", "news"):
         group = [f for f in shown if f.source == source]
         if not group:
             continue
