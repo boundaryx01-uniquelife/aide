@@ -21,5 +21,7 @@
     "https://www.kosac.re.kr/menus/274/bns"
   ],
   "weather_enabled": false,
-  "calendar_enabled": false
+  "calendar_enabled": false,
+  "mail_enabled": false,
+  "mail_senders": []
 }

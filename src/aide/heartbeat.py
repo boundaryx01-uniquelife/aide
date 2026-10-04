@@ -6,7 +6,7 @@ import secrets
 from datetime import datetime, time
 from typing import Callable, List, Optional
 
-from . import inbox, telegram
+from . import gmail, google_auth, inbox, netutil, telegram
 from .checks import git_dirty, news_keywords, notice_pages
 from .config import Config
 from .models import Finding
@@ -14,7 +14,7 @@ from .state import State, StateLocked, locked
 
 log = logging.getLogger("aide.heartbeat")
 
-SOURCE_LABELS = {"git": "작업 폴더", "news": "뉴스 키워드", "notice": "기관 공지·마감"}
+SOURCE_LABELS = {"git": "작업 폴더", "news": "뉴스 키워드", "notice": "기관 공지·마감", "mail": "메일 (허용 발신자)"}
 
 
 def parse_hhmm(value: str) -> time:
@@ -40,7 +40,7 @@ def _is_new(state: State, f: Finding) -> bool:
     return not any(state.is_seen(k) for k in _keys(f))
 
 
-def collect(cfg: Config, now: datetime, fetch=news_keywords.fetch_feed) -> List[Finding]:
+def collect(cfg: Config, now: datetime, fetch=news_keywords.fetch_feed, mail_fetch=gmail.unread_from) -> List[Finding]:
     findings: List[Finding] = []
     findings += git_dirty.check(cfg.watch_repos, cfg.git_dirty_threshold, now.date())
     findings += news_keywords.check(
@@ -49,13 +49,20 @@ def collect(cfg: Config, now: datetime, fetch=news_keywords.fetch_feed) -> List[
     findings += notice_pages.check(
         cfg.notice_pages, cfg.notice_keywords, fetch, now, cfg.notice_max_per_page
     )
+    if cfg.mail_enabled and cfg.mail_senders:
+        try:
+            token = google_auth.access_token(cfg.resolved_google_client(), cfg.resolved_google_token(),
+                                             need_scope=google_auth.GMAIL_SCOPE)
+            findings += mail_fetch(token, cfg.mail_senders, cfg.mail_max_items)
+        except (google_auth.GoogleAuthError, netutil.NetError, gmail.MailConfigError) as e:
+            log.warning("메일 확인 건너뜀: %s", e)  # never blocks the other checks
     return findings
 
 
 def format_digest(findings: List[Finding], now: datetime, limit: int) -> str:
     shown, rest = findings[:limit], max(0, len(findings) - limit)
     lines = [f"[aide] 알림 {len(findings)}건 · {now:%m/%d %H:%M}"]
-    for source in ("notice", "git", "news"):
+    for source in ("mail", "notice", "git", "news"):
         group = [f for f in shown if f.source == source]
         if not group:
             continue

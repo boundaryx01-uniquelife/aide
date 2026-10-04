@@ -20,7 +20,9 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from . import netutil
 
-SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+CAL_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+SCOPE = f"{CAL_SCOPE} {GMAIL_SCOPE}"  # both READ-ONLY
 AUTH_HOST, TOKEN_HOST = "accounts.google.com", "oauth2.googleapis.com"
 LOGIN_TIMEOUT = 180
 
@@ -113,6 +115,7 @@ def exchange_code(client, code, redirect_uri, verifier, token_path, post=netutil
         raise GoogleAuthError("토큰 응답에 refresh_token 이 없습니다 (다시 로그인하세요).")
     _save_token(token_path, {
         "refresh_token": r["refresh_token"], "access_token": r["access_token"],
+        "scope": str(r.get("scope", "")),
         "expires_at": now() + int(r.get("expires_in", 3600)),
     })
 
@@ -172,16 +175,19 @@ def login(client_path, token_path, open_browser=webbrowser.open, post=netutil.po
     if handler.result is None:
         raise GoogleAuthError("시간 초과: 로그인이 완료되지 않았습니다.")
     exchange_code(client, handler.result, redirect, verifier, token_path, post=post)
-    say("로그인 완료. 읽기 전용 권한만 저장되었습니다.")
+    say("로그인 완료. 읽기 전용 권한(캘린더, Gmail)만 저장되었습니다.")
 
 
-def access_token(client_path, token_path, post=netutil.post_form, now=time.time) -> str:
+def access_token(client_path, token_path, post=netutil.post_form, now=time.time, need_scope: str = CAL_SCOPE) -> str:
     try:
         tok = json.loads(Path(token_path).read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise GoogleAuthError("Google 로그인이 안 되어 있습니다 (`python -m aide google-login`).") from None
     except (ValueError, OSError):
         raise GoogleAuthError("토큰 파일을 읽을 수 없습니다.") from None
+    granted = tok.get("scope") or CAL_SCOPE  # logins made before Gmail support only had calendar
+    if need_scope not in granted.split():
+        raise GoogleAuthError("이 기능에 필요한 권한이 없습니다. `python -m aide google-login` 을 다시 실행하세요.")
     if tok.get("access_token") and float(tok.get("expires_at", 0)) - now() > 60:
         return tok["access_token"]
     client = load_client(client_path)

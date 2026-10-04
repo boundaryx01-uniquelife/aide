@@ -66,7 +66,7 @@ class UrlTests(Base):
         v, ch = ga._pkce()
         u = ga.build_auth_url(ga.load_client(self.cp), "http://127.0.0.1:5", "ST", ch)
         q = {k: v[0] for k, v in parse_qs(urlparse(u).query).items()}
-        self.assertEqual(q["scope"], "https://www.googleapis.com/auth/calendar.readonly")
+        self.assertEqual(q["scope"], "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly")
         self.assertEqual((q["state"], q["code_challenge"], q["code_challenge_method"]), ("ST", ch, "S256"))
         self.assertEqual((q["access_type"], q["prompt"], q["response_type"]), ("offline", "consent", "code"))
         self.assertEqual(q["redirect_uri"], "http://127.0.0.1:5")

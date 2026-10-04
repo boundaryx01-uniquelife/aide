@@ -21,3 +21,12 @@
 - 테스트 모드 앱의 로그인은 7일 뒤 만료될 수 있습니다. 그때 `google-login` 을 다시 실행하세요 (인사에는 "불러오지 못했어요"만 표시).
 - 로그인 취소: https://myaccount.google.com/permissions 에서 aide 제거 + `data\google_token.json` 삭제.
 - `google_client.json`, `google_token.json` 은 채팅·커밋에 올리지 마세요.
+
+## Gmail 추가 (메일 알림용, 읽기 전용)
+1. Google Cloud 콘솔에서 **Gmail API** 도 사용 설정 (검색창에 `Gmail API`)
+2. 같은 프로젝트·클라이언트를 그대로 사용합니다. 대상(테스트 사용자)도 이미 설정되어 있으면 추가 작업 없음
+3. PowerShell: `python -m aide google-login` 을 다시 실행 → 동의 화면에 **캘린더 읽기**와 **Gmail 읽기** 두 권한이 보입니다
+4. `config.json`: `"mail_enabled": true`, `"mail_senders": ["pen.go.kr"]`
+5. 시험: `python -m aide heartbeat` (미리보기). 안 읽은 허용 발신자 메일이 있으면 "메일 (허용 발신자)" 묶음으로 나옵니다.
+- 로그인을 다시 하기 전에는 메일 기능이 "권한 없음"으로 건너뛰어지고 다른 알림은 정상 동작합니다.
+- 권한 철회: https://myaccount.google.com/permissions

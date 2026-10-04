@@ -74,3 +74,10 @@ python -m unittest discover -s tests -v
 - 처음 등록하면 기존 글이 페이지당 최대 `notice_max_per_page`(기본 5)건 한 번 올 수 있습니다.
 - 사이트마다 HTML 이 달라 먼저 시험하세요: `python -m aide notices` (전송·기록 없음). 0건이거나 엉뚱하면 알려 주세요(사이트별로 조정).
 - 서버에서 완성된 HTML 로 주는 페이지만 읽습니다(자바스크립트로 그리는 페이지는 못 읽음). 로그인 필요한 게시판은 지원하지 않습니다.
+
+## 메일 알림 (읽기 전용, 허용 발신자만)
+`config.json` 에 `"mail_enabled": true`, `"mail_senders": ["pen.go.kr", "someone@site.kr"]` 를 넣으면 **그 발신자**가 보낸 **안 읽은 받은편지함 메일**(최근 2일)의 `보낸 사람: 제목` 한 줄만 알려 줍니다.
+- 본문·첨부·스니펫은 가져오지 않습니다(헤더 From/Subject 만 요청). 허용 목록에 없는 메일은 조회 자체를 하지 않습니다.
+- 알림에는 Gmail 링크가 붙고, 눌러서 열어 보는 것은 선생님입니다. aide 는 메일을 읽음 처리·삭제·전송하지 않습니다(권한이 읽기 전용).
+- 메일 제목이 텔레그램(외부 서비스)으로 전달됩니다. 민감한 발신자는 목록에 넣지 마세요.
+- 설정: `docs/GOOGLE_SETUP.md` 의 "Gmail 추가" 를 따라 Gmail API 를 켜고 `python -m aide google-login` 을 **다시** 실행해야 합니다.
