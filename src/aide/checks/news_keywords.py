@@ -38,6 +38,8 @@ def fetch_feed(url: str) -> bytes:
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = resp.read(MAX_BYTES + 1)
+    except urllib.error.HTTPError as e:
+        raise FeedError(f"가져오기 실패: HTTP {e.code}") from None
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise FeedError(f"가져오기 실패: {type(e).__name__}") from None
     if len(data) > MAX_BYTES:

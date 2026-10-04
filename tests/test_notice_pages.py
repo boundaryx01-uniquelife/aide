@@ -181,6 +181,24 @@ class CliTests(unittest.TestCase):
         self.assertIn("직무연수", out)
         self.assertIn("선택", out)
 
+    def test_http_error_code_is_shown(self):
+        import io, json, tempfile, urllib.error
+        from contextlib import redirect_stdout
+        from pathlib import Path
+        from unittest import mock
+        from aide import __main__ as cli
+        from aide.checks import news_keywords as nk
+
+        def boom(*a, **k):
+            raise urllib.error.HTTPError("https://x", 403, "Forbidden", {}, None)
+        with tempfile.TemporaryDirectory() as d:
+            cfgp = Path(d) / "c.json"
+            cfgp.write_text("{}", encoding="utf-8")
+            buf = io.StringIO()
+            with mock.patch("urllib.request.urlopen", boom), redirect_stdout(buf):
+                cli.main(["notices", "https://example.go.kr/x", "--config", str(cfgp)])
+        self.assertIn("HTTP 403", buf.getvalue())
+
     def test_notices_without_pages_is_setup_error(self):
         import io, json, tempfile
         from contextlib import redirect_stdout

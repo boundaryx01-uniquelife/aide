@@ -76,7 +76,7 @@ def main(argv=None) -> int:
             try:
                 n = len(notice_pages.parse_items(notice_pages.decode(news_keywords.fetch_feed(page))))
             except Exception as e:  # noqa: BLE001
-                print(f"[{page}] 가져오기 실패: {type(e).__name__}")
+                print(f"[{page}] {e}")
                 continue
             found = notice_pages.check([page], cfg.notice_keywords, news_keywords.fetch_feed,
                                        datetime.now(), cfg.notice_max_per_page)
