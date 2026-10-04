@@ -21,6 +21,8 @@ log = logging.getLogger("aide.notice")
 
 MIN_TITLE = 8
 _END_DATE = re.compile(r"~\s*(20\d\d)[-./ ]\s*(\d{1,2})[-./ ]\s*(\d{1,2})")
+# A real list row shows a date next to the title; menus/buttons/footers do not.
+_ANY_DATE = re.compile(r"20\d\d\s*[-./]\s*\d{1,2}\s*[-./]\s*\d{1,2}|(?<!\d)\d{1,2}\s*[-./]\s*\d{1,2}(?!\d)")
 _NORM = re.compile(r"[\W_]+", re.UNICODE)
 
 
@@ -124,6 +126,8 @@ def check(
             title = clean(raw_title, 120)
             if len(title) < MIN_TITLE or not any(k in title.lower() for k in kws):
                 continue
+            if not _ANY_DATE.search(row.replace(raw_title, " ", 1)):
+                continue  # no date in the row -> navigation, not a notice
             if "접수마감" in row or "마감됨" in row:
                 continue
             due = deadline_of(row)

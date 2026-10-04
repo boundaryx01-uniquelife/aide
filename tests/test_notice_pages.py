@@ -90,15 +90,15 @@ class CheckTests(unittest.TestCase):
         self.assertEqual([u for t, u in f.items() if "직무연수" in t][0], PAGE)  # javascript: -> page url
 
     def test_hostile_links_never_leak_scheme(self):
-        html = '<ul><li><a href="data:text/html,x">공모 악성 링크 시험용 제목</a></li></ul>'
+        html = '<ul><li><a href="data:text/html,x">공모 악성 링크 시험용 제목</a> 2026-10-03</li></ul>'
         self.assertEqual(self.run_check(html)[0].url, PAGE)
 
     def test_max_per_page(self):
-        rows = "".join(f'<li><a href="/{i}">공모 신청 안내 번호 {i}</a></li>' for i in range(9))
+        rows = "".join(f'<li><a href="/{i}">공모 신청 안내 번호 {i}</a> 2026-10-03</li>' for i in range(9))
         self.assertEqual(len(self.run_check(f"<ul>{rows}</ul>", max_per_page=3)), 3)
 
     def test_title_is_sanitized(self):
-        html = '<ul><li><a href="/x">공모 \x00제목\n' + "가" * 300 + "</a></li></ul>"
+        html = '<ul><li><a href="/x">공모 \x00제목\n' + "가" * 300 + "</a> 2026-10-03</li></ul>"
         t = self.run_check(html)[0].title
         self.assertNotIn("\x00", t)
         self.assertLessEqual(len(t), 120)
@@ -120,6 +120,27 @@ class CheckTests(unittest.TestCase):
 
 
 class MoreEdgeTests(unittest.TestCase):
+    def test_menu_links_without_a_date_are_ignored(self):
+        html = ('<ul><li><a href="/a">제안/공모/정책토론 메뉴입니다</a></li>'
+                '<li><a href="/b">프로그램운영신청/자료집계</a></li>'
+                '<li><a href="/c">[대회] 작품제출 바로가기</a></li></ul>'
+                '<table><tr><td><a href="/d">발명 연수 공모 안내 글</a></td><td>2026.10.01</td></tr></table>')
+        got = np.check([PAGE], KW + ["대회", "신청"], lambda u: html.encode(), NOW)
+        self.assertEqual([x.title for x in got], ["발명 연수 공모 안내 글"])
+
+    def test_too_short_title_ignored_even_with_date(self):
+        html = '<table><tr><td><a href="/a">공모 안내</a></td><td>2026.10.01</td></tr></table>'
+        self.assertEqual(np.check([PAGE], KW, lambda u: html.encode(), NOW), [])
+
+    def test_date_inside_the_title_alone_does_not_count(self):
+        html = '<ul><li><a href="/a">2026-10-03 공모 메뉴 링크 텍스트</a></li></ul>'
+        self.assertEqual(np.check([PAGE], KW, lambda u: html.encode(), NOW), [])
+
+    def test_short_date_formats_count(self):
+        for d in ("10.01", "10/1", "2026-10-01"):
+            html = f'<table><tr><td><a href="/a">발명 연수 공모 안내 글</a></td><td>{d}</td></tr></table>'
+            self.assertEqual(len(np.check([PAGE], KW, lambda u: html.encode(), NOW)), 1, d)
+
     def one(self, html, now=NOW):
         return np.check([PAGE], KW, lambda u: html.encode(), now)
 
