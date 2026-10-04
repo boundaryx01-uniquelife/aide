@@ -65,4 +65,4 @@ python -m unittest discover -s tests -v
 `python -m aide morning` 은 어제 커밋 요약과 커밋 안 된 변경이 많은 폴더를 한 줄씩 보여 줍니다 (기본은 미리보기, 전송 안 함).
 `--send` 로 텔레그램에 보내며 하루에 한 번만 갑니다. 조용한 시간(기본 22:30~07:00)에는 건너뜁니다.
 설정 시 날씨(Open-Meteo)와 오늘 구글 캘린더 일정(읽기 전용)도 함께 보냅니다 → `docs/GOOGLE_SETUP.md`. 일정/날씨 조회가 실패해도 인사는 갑니다.
-PC 시작 시 자동 실행은 `scripts\register_morning.bat` (1단계가 안정된 뒤에 등록).
+30분 점검 작업(`run_heartbeat.bat`)이 마지막에 `morning --send` 를 함께 실행하므로 별도 예약이 필요 없습니다. 조용한 시간이 끝난 뒤 첫 점검(최대 30분 안)에 하루 한 번만 전송됩니다. (`register_morning.bat` 은 관리자 권한이 필요해 쓰지 않습니다.)
