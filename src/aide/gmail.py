@@ -7,6 +7,7 @@ address is re-checked locally. Sender name and subject are untrusted text -> cle
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta
 from email.utils import parseaddr
 from typing import Callable, Iterable, List
 from urllib.parse import urlencode
@@ -51,28 +52,65 @@ def query_for(senders: List[str]) -> str:
     return f"is:unread in:inbox newer_than:{NEWER_THAN} from:({who})"
 
 
+def _headers(token: str, mid: str, get: Callable):
+    mq = urlencode([("format", "metadata"), ("metadataHeaders", "From"), ("metadataHeaders", "Subject"),
+                    ("fields", "id,payload/headers")])
+    msg = get(f"{BASE}/{mid}?{mq}", headers={"Authorization": f"Bearer {token}"})
+    heads = {h.get("name", "").lower(): h.get("value", "")
+             for h in ((msg.get("payload") or {}).get("headers") or []) if isinstance(h, dict)} if isinstance(msg, dict) else {}
+    name, addr = parseaddr(heads.get("from", ""))
+    return name, addr, heads.get("subject", "")
+
+
+def _finding(mid: str, name: str, addr: str, subject: str) -> Finding:
+    who = clean(name, 40) or clean(addr, 60)
+    return Finding(key=f"mail:{mid}", source="mail", title=f"{who}: {clean(subject, 120) or '(제목 없음)'}",
+                   url=f"https://mail.google.com/mail/u/0/#all/{mid}")
+
+
+def _list_ids(token: str, query: str, limit: int, get: Callable) -> List[str]:
+    q = urlencode({"q": query, "maxResults": limit, "fields": "messages(id)"})
+    data = get(f"{BASE}?{q}", headers={"Authorization": f"Bearer {token}"})
+    ids = [m.get("id", "") for m in (data.get("messages") or []) if isinstance(m, dict)] if isinstance(data, dict) else []
+    return [i for i in ids if _ID.match(i)]
+
+
 def unread_from(token: str, senders: List[str], max_items: int = 5, get: Callable = netutil.get_json) -> List[Finding]:
     senders = valid_senders(senders)
     if not senders:
         return []
-    hdr = {"Authorization": f"Bearer {token}"}
-    q = urlencode({"q": query_for(senders), "maxResults": max_items * 2, "fields": "messages(id)"})
-    data = get(f"{BASE}?{q}", headers=hdr)
-    ids = [m.get("id", "") for m in (data.get("messages") or []) if isinstance(m, dict)] if isinstance(data, dict) else []
     out: List[Finding] = []
-    for mid in ids:
-        if not _ID.match(mid) or len(out) >= max_items:
-            continue
-        mq = urlencode([("format", "metadata"), ("metadataHeaders", "From"), ("metadataHeaders", "Subject"),
-                        ("fields", "id,payload/headers")])
-        msg = get(f"{BASE}/{mid}?{mq}", headers=hdr)
-        heads = {h.get("name", "").lower(): h.get("value", "")
-                 for h in ((msg.get("payload") or {}).get("headers") or []) if isinstance(h, dict)} if isinstance(msg, dict) else {}
-        name, addr = parseaddr(heads.get("from", ""))
+    for mid in _list_ids(token, query_for(senders), max_items * 2, get):
+        if len(out) >= max_items:
+            break
+        name, addr, subject = _headers(token, mid, get)
         if not _allowed(addr, senders):
             continue  # defence in depth: never show mail the allowlist does not cover
-        who = clean(name, 40) or clean(addr, 60)
-        subject = clean(heads.get("subject", ""), 120) or "(제목 없음)"
-        out.append(Finding(key=f"mail:{mid}", source="mail", title=f"{who}: {subject}",
-                           url=f"https://mail.google.com/mail/u/0/#all/{mid}"))
+        out.append(_finding(mid, name, addr, subject))
+    return out
+
+
+def recent_query(blocked: List[str], since_epoch: int) -> str:
+    q = f"is:unread in:inbox category:primary after:{since_epoch}"
+    return q + (f" -from:({' OR '.join(blocked)})" if blocked else "")
+
+
+def recent_unread(token: str, max_items: int, window_hours: int, blocked: Iterable[str], now: datetime,
+                  get: Callable = netutil.get_json) -> List[Finding]:
+    """Newest unread Primary-tab mail from the last `window_hours`, minus a block list.
+    Headers only. If more mail exists than `max_items`, the last item says so."""
+    blocked = valid_senders(blocked)
+    since = int((now - timedelta(hours=window_hours)).timestamp())
+    ids = _list_ids(token, recent_query(blocked, since), max_items + 10, get)
+    out: List[Finding] = []
+    for mid in ids[:max_items]:
+        name, addr, subject = _headers(token, mid, get)
+        if blocked and _allowed(addr, blocked):
+            continue
+        out.append(_finding(mid, name, addr, subject))
+    extra = len(ids) - max_items
+    if out and extra > 0:
+        last = out[-1]
+        more = "10건 이상" if extra >= 10 else f"{extra}건"
+        out[-1] = Finding(last.key, last.source, last.title, f"…이 외에 {more} 더 (Gmail 에서 확인)", last.url)
     return out

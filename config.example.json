@@ -23,5 +23,7 @@
   "weather_enabled": false,
   "calendar_enabled": false,
   "mail_enabled": false,
-  "mail_senders": []
+  "mail_senders": [],
+  "mail_recent_hours": [],
+  "mail_block": []
 }

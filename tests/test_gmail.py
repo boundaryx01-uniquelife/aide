@@ -176,18 +176,218 @@ class HeartbeatMailTests(unittest.TestCase):
         self.assertEqual([f.source for f in out], ["mail"])
 
     def test_failures_never_block_other_checks(self):
-        for exc in (ga.GoogleAuthError("x"), netutil.NetError("y"), gmail.MailConfigError("z")):
+        for exc in (ga.GoogleAuthError("x"), netutil.NetError("y")):
             with mock.patch.object(ga, "access_token", side_effect=exc):
                 out = heartbeat.collect(self.cfg(mail_enabled=True, mail_senders=["pen.go.kr"]), NOW, lambda u: b"")
             self.assertEqual(out, [])
+        def bad(*a, **k):
+            raise gmail.MailConfigError("z")
+        with mock.patch.object(ga, "access_token", return_value="T"):
+            out = heartbeat.collect(self.cfg(mail_enabled=True, mail_senders=["pen.go.kr"]), NOW, lambda u: b"", mail_fetch=bad)
+        self.assertEqual(out, [])
 
     def test_digest_shows_mail_first_with_label(self):
         from aide.models import Finding
         fs = [Finding("g", "git", "작업 폴더 알림"), Finding("n", "notice", "공모 안내"),
               Finding("m", "mail", "교육청: 연수")]
         text = heartbeat.format_digest(fs, NOW, 10)
-        self.assertLess(text.index("메일 (허용 발신자)"), text.index("기관 공지·마감"))
+        self.assertLess(text.index("메일"), text.index("기관 공지·마감"))
         self.assertLess(text.index("기관 공지·마감"), text.index("작업 폴더\n"))
+
+
+class RecentMailTests(unittest.TestCase):
+    def msgs(self, n, frm="a@x.kr"):
+        ids = [f"{i:016x}" for i in range(1, n + 1)]
+        return ids, {i: {"From": f"사람{k} <{frm}>", "Subject": f"제목{k}"} for k, i in enumerate(ids)}
+
+    def test_query_primary_unread_window_and_blocklist(self):
+        ids, m = self.msgs(1)
+        calls = []
+        gmail.recent_unread("T", 5, 12, ["spam.kr", "a@b.kr"], NOW, get=make_get(m, listing=ids, calls=calls))
+        q = parse_qs(urlparse(calls[0][0]).query)["q"][0]
+        since = int(NOW.timestamp()) - 12 * 3600
+        self.assertEqual(q, f"is:unread in:inbox category:primary after:{since} -from:(spam.kr OR a@b.kr)")
+        calls2 = []
+        gmail.recent_unread("T", 5, 12, [], NOW, get=make_get(m, listing=ids, calls=calls2))
+        self.assertNotIn("-from", parse_qs(urlparse(calls2[0][0]).query)["q"][0])
+
+    def test_limit_and_more_marker(self):
+        ids, m = self.msgs(8)
+        out = gmail.recent_unread("T", 5, 12, [], NOW, get=make_get(m, listing=ids))
+        self.assertEqual(len(out), 5)
+        self.assertEqual(out[-1].detail, "…이 외에 3건 더 (Gmail 에서 확인)")
+        self.assertTrue(all(f.detail == "" for f in out[:-1]))
+        ids, m = self.msgs(5)
+        self.assertEqual(gmail.recent_unread("T", 5, 12, [], NOW, get=make_get(m, listing=ids))[-1].detail, "")
+
+    def test_many_more_says_ten_or_more(self):
+        ids, m = self.msgs(16)
+        out = gmail.recent_unread("T", 5, 12, [], NOW, get=make_get(m, listing=ids))
+        self.assertIn("10건 이상", out[-1].detail)
+
+    def test_list_request_size_leaves_room_for_more_marker(self):
+        ids, m = self.msgs(1)
+        calls = []
+        gmail.recent_unread("T", 5, 12, [], NOW, get=make_get(m, listing=ids, calls=calls))
+        self.assertEqual(parse_qs(urlparse(calls[0][0]).query)["maxResults"], ["15"])
+
+    def test_blocked_sender_dropped_locally_and_invalid_block_rejected(self):
+        ids, m = self.msgs(2)
+        m[ids[0]]["From"] = "x@spam.kr"
+        out = gmail.recent_unread("T", 5, 12, ["spam.kr"], NOW, get=make_get(m, listing=ids))
+        self.assertEqual(len(out), 1)
+        with self.assertRaises(gmail.MailConfigError):
+            gmail.recent_unread("T", 5, 12, ["x) OR (y"], NOW, get=make_get(m, listing=ids))
+
+    def test_empty_result_has_no_marker(self):
+        self.assertEqual(gmail.recent_unread("T", 5, 12, [], NOW, get=make_get({}, listing=[])), [])
+
+
+class SlotTests(unittest.TestCase):
+    def cfg(self, hours=(8, 18), **kw):
+        return Config(mail_enabled=True, mail_recent_hours=list(hours), **kw)
+
+    def test_slot_selection(self):
+        slot = lambda h, m=0: heartbeat.mail_slot(self.cfg(), datetime(2026, 10, 4, h, m))
+        self.assertIsNone(slot(7, 59))
+        self.assertEqual(slot(8), "mailslot:2026-10-04:08")
+        self.assertEqual(slot(17, 59), "mailslot:2026-10-04:08")
+        self.assertEqual(slot(18), "mailslot:2026-10-04:18")
+        self.assertEqual(slot(23), "mailslot:2026-10-04:18")
+        self.assertEqual(heartbeat.mail_slot(self.cfg(hours=(18, 8)), datetime(2026, 10, 4, 9)), "mailslot:2026-10-04:08")
+        self.assertIsNone(heartbeat.mail_slot(self.cfg(hours=()), datetime(2026, 10, 4, 9)))
+
+    def test_collect_only_asks_for_recent_when_due(self):
+        calls = []
+        rf = lambda *a: calls.append(a) or []
+        cfg = self.cfg()
+        with mock.patch.object(ga, "access_token", return_value="T"):
+            heartbeat.collect(cfg, NOW, lambda u: b"", include_recent=False, recent_fetch=rf)
+            self.assertEqual(calls, [])
+            st = {}
+            heartbeat.collect(cfg, NOW, lambda u: b"", include_recent=True, recent_fetch=rf, mail_status=st)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1:4], (5, 12, []))
+        self.assertTrue(st["recent_ok"])
+
+    def test_no_hours_configured_means_no_recent_check_even_if_asked(self):
+        def boom(*a):
+            raise AssertionError("must not run")
+        with mock.patch.object(ga, "access_token", return_value="T"):
+            heartbeat.collect(self.cfg(hours=()), NOW, lambda u: b"", include_recent=True, recent_fetch=boom,
+                              mail_fetch=lambda *a: [])
+
+    def test_recent_failure_leaves_status_unset(self):
+        def bad(*a):
+            raise netutil.NetError("x")
+        st = {}
+        with mock.patch.object(ga, "access_token", return_value="T"):
+            heartbeat.collect(self.cfg(), NOW, lambda u: b"", include_recent=True, recent_fetch=bad, mail_status=st)
+        self.assertNotIn("recent_ok", st)
+
+    def test_duplicate_mail_from_both_modes_is_collapsed(self):
+        from aide.models import Finding
+        f = Finding("mail:aaaa1111", "mail", "x: y")
+        with mock.patch.object(ga, "access_token", return_value="T"):
+            out = heartbeat.collect(self.cfg(mail_senders=["x.kr"]), NOW, lambda u: b"",
+                                    mail_fetch=lambda *a: [f], recent_fetch=lambda *a: [f], include_recent=True)
+        self.assertEqual(len(out), 1)
+
+
+class SlotRunTests(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.TemporaryDirectory()
+        self.cfg = Config(mail_enabled=True, mail_recent_hours=[8, 18], state_path=str(Path(self.d.name) / "s.json"),
+                          max_items_per_digest=3)
+        self.sent = []
+        self.recent_calls = 0
+        self.items = []
+        self.env = mock.patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "1"})
+        self.env.start()
+        self.tok = mock.patch.object(ga, "access_token", return_value="T")
+        self.tok.start()
+
+    def tearDown(self):
+        self.tok.stop()
+        self.env.stop()
+        self.d.cleanup()
+
+    def run_at(self, hour, minute=0):
+        from aide.models import Finding
+
+        def rf(*a):
+            self.recent_calls += 1
+            return [Finding(f"mail:{i:016x}", "mail", f"s: {i}") for i in self.items]
+        with mock.patch.object(gmail, "recent_unread", rf):
+            return heartbeat.run(self.cfg, send=True, now=datetime(2026, 10, 4, hour, minute),
+                                 sender=lambda text, **k: self.sent.append(text), fetch=lambda u: b"")
+
+    def test_slot_checked_once_even_when_empty(self):
+        self.run_at(8, 0)
+        self.run_at(8, 30)
+        self.run_at(9, 0)
+        self.assertEqual(self.recent_calls, 1)
+        self.run_at(18, 0)
+        self.assertEqual(self.recent_calls, 2)
+
+    def test_sends_once_and_marks_slot(self):
+        self.items = [1, 2]
+        self.run_at(8, 0)
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("s: 1", self.sent[0])
+        self.items = [1, 2, 3]
+        self.run_at(8, 30)                       # same slot: no new check, nothing sent
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.recent_calls, 1)
+
+    def test_before_first_slot_no_mail_check(self):
+        self.run_at(7, 0)
+        self.assertEqual(self.recent_calls, 0)
+
+    def test_leftovers_keep_slot_open(self):
+        self.items = [1, 2, 3, 4, 5]             # batch limit is 3
+        self.run_at(8, 0)
+        self.assertEqual(self.recent_calls, 1)
+        self.run_at(8, 30)                       # slot still open -> remaining items go out
+        self.assertEqual(self.recent_calls, 2)
+        self.assertIn("s: 4", self.sent[1])
+        self.run_at(9, 0)                        # now complete
+        self.assertEqual(self.recent_calls, 2)
+
+    def test_failed_check_does_not_use_up_the_slot(self):
+        def bad(*a):
+            raise netutil.NetError("down")
+        with mock.patch.object(gmail, "recent_unread", bad):
+            heartbeat.run(self.cfg, send=True, now=datetime(2026, 10, 4, 8, 0),
+                          sender=lambda *a, **k: None, fetch=lambda u: b"")
+        self.items = [1]
+        self.run_at(8, 30)
+        self.assertEqual(self.recent_calls, 1)
+        self.assertEqual(len(self.sent), 1)
+
+    def test_preview_ignores_slot_and_changes_no_state(self):
+        from aide.models import Finding
+        with mock.patch.object(gmail, "recent_unread", lambda *a: [Finding("mail:aaaa1111", "mail", "s: x")]):
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                heartbeat.run(self.cfg, send=False, now=datetime(2026, 10, 4, 7, 0), force=True, fetch=lambda u: b"")
+        self.assertIn("s: x", buf.getvalue())
+        self.assertFalse(Path(self.cfg.state_path).exists())
+
+
+class ConfigHoursTests(unittest.TestCase):
+    def test_validation(self):
+        from aide.config import ConfigError, load_config
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "c.json"
+            for bad in ([24], [-1], ["8"], [True], [8.5]):
+                p.write_text(json.dumps({"mail_recent_hours": bad}), encoding="utf-8")
+                with self.assertRaises(ConfigError, msg=str(bad)):
+                    load_config(p)
+            p.write_text(json.dumps({"mail_recent_hours": [8, 18]}), encoding="utf-8")
+            self.assertEqual(load_config(p).mail_recent_hours, [8, 18])
 
 
 if __name__ == "__main__":

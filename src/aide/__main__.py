@@ -59,7 +59,7 @@ def main(argv=None) -> int:
         print(f"state file       : {cfg.resolved_state_path()}")
         print(f"TELEGRAM_BOT_TOKEN: {'설정됨' if os.environ.get('TELEGRAM_BOT_TOKEN') else '없음'}")
         print(f"TELEGRAM_CHAT_ID  : {'설정됨' if os.environ.get('TELEGRAM_CHAT_ID') else '없음'}")
-        print(f"mail             : {'켜짐' if cfg.mail_enabled else '꺼짐'} / 허용 발신자 {len(cfg.mail_senders)}개")
+        print(f"mail             : {'켜짐' if cfg.mail_enabled else '꺼짐'} / 허용 발신자 {len(cfg.mail_senders)}개 / 시간대 요약 {cfg.mail_recent_hours or '없음'}")
         print(f"weather          : {'켜짐' if cfg.weather_enabled else '꺼짐'}")
         print(f"calendar         : {'켜짐' if cfg.calendar_enabled else '꺼짐'}"
               f" / client {'있음' if cfg.resolved_google_client().exists() else '없음'}"

@@ -31,6 +31,10 @@ class Config:
     mail_enabled: bool = False
     mail_senders: List[str] = field(default_factory=list)   # domains (pen.go.kr) or addresses
     mail_max_items: int = 5
+    mail_recent_hours: List[int] = field(default_factory=list)  # e.g. [8, 18]: digest of new Primary mail at those hours
+    mail_recent_window_hours: int = 12
+    mail_recent_max: int = 5
+    mail_block: List[str] = field(default_factory=list)         # senders to leave out of the digest
     weather_enabled: bool = False
     latitude: float = 35.2      # Busan Dongnae (approx.)
     longitude: float = 129.08
@@ -84,8 +88,10 @@ def load_config(path: Optional[Path] = None) -> Config:
     if unknown:
         raise ConfigError(f"알 수 없는 설정 키: {sorted(unknown)}")
     cfg = Config(**data)
-    if cfg.git_dirty_threshold < 1 or cfg.max_items_per_digest < 1 or cfg.news_max_age_hours < 1 or cfg.notice_max_per_page < 1 or cfg.mail_max_items < 1:
+    if cfg.git_dirty_threshold < 1 or cfg.max_items_per_digest < 1 or cfg.news_max_age_hours < 1 or cfg.notice_max_per_page < 1 or cfg.mail_max_items < 1 or cfg.mail_recent_max < 1 or cfg.mail_recent_window_hours < 1:
         raise ConfigError("git_dirty_threshold / max_items_per_digest / news_max_age_hours 는 1 이상이어야 합니다.")
     if not (-90 <= cfg.latitude <= 90 and -180 <= cfg.longitude <= 180):
         raise ConfigError("latitude / longitude 범위가 올바르지 않습니다.")
+    if any(not isinstance(h, int) or isinstance(h, bool) or not 0 <= h <= 23 for h in cfg.mail_recent_hours):
+        raise ConfigError("mail_recent_hours 는 0~23 사이 정수 목록이어야 합니다 (예: [8, 18]).")
     return cfg

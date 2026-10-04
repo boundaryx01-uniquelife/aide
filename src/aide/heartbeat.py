@@ -14,7 +14,7 @@ from .state import State, StateLocked, locked
 
 log = logging.getLogger("aide.heartbeat")
 
-SOURCE_LABELS = {"git": "작업 폴더", "news": "뉴스 키워드", "notice": "기관 공지·마감", "mail": "메일 (허용 발신자)"}
+SOURCE_LABELS = {"git": "작업 폴더", "news": "뉴스 키워드", "notice": "기관 공지·마감", "mail": "메일"}
 
 
 def parse_hhmm(value: str) -> time:
@@ -40,7 +40,21 @@ def _is_new(state: State, f: Finding) -> bool:
     return not any(state.is_seen(k) for k in _keys(f))
 
 
-def collect(cfg: Config, now: datetime, fetch=news_keywords.fetch_feed, mail_fetch=gmail.unread_from) -> List[Finding]:
+def mail_slot(cfg: Config, now: datetime) -> Optional[str]:
+    """State key of today's most recent mail-digest hour that has already started (None before the first)."""
+    started = [h for h in cfg.mail_recent_hours if h <= now.hour]
+    return f"mailslot:{now.date().isoformat()}:{max(started):02d}" if started else None
+
+
+def collect(
+    cfg: Config,
+    now: datetime,
+    fetch=news_keywords.fetch_feed,
+    mail_fetch=gmail.unread_from,
+    include_recent: bool = False,
+    mail_status: Optional[dict] = None,
+    recent_fetch=None,
+) -> List[Finding]:
     findings: List[Finding] = []
     findings += git_dirty.check(cfg.watch_repos, cfg.git_dirty_threshold, now.date())
     findings += news_keywords.check(
@@ -49,13 +63,32 @@ def collect(cfg: Config, now: datetime, fetch=news_keywords.fetch_feed, mail_fet
     findings += notice_pages.check(
         cfg.notice_pages, cfg.notice_keywords, fetch, now, cfg.notice_max_per_page
     )
-    if cfg.mail_enabled and cfg.mail_senders:
+    want_recent = include_recent and bool(cfg.mail_recent_hours)
+    if cfg.mail_enabled and (cfg.mail_senders or want_recent):
+        mail: List[Finding] = []
+        token = None
         try:
             token = google_auth.access_token(cfg.resolved_google_client(), cfg.resolved_google_token(),
                                              need_scope=google_auth.GMAIL_SCOPE)
-            findings += mail_fetch(token, cfg.mail_senders, cfg.mail_max_items)
-        except (google_auth.GoogleAuthError, netutil.NetError, gmail.MailConfigError) as e:
+        except (google_auth.GoogleAuthError, netutil.NetError) as e:
             log.warning("메일 확인 건너뜀: %s", e)  # never blocks the other checks
+        if token and cfg.mail_senders:
+            try:
+                mail += mail_fetch(token, cfg.mail_senders, cfg.mail_max_items)
+            except (netutil.NetError, gmail.MailConfigError) as e:
+                log.warning("허용 발신자 메일 확인 건너뜀: %s", e)
+        if token and want_recent:
+            try:
+                mail += (recent_fetch or gmail.recent_unread)(token, cfg.mail_recent_max, cfg.mail_recent_window_hours, cfg.mail_block, now)
+                if mail_status is not None:
+                    mail_status["recent_ok"] = True
+            except (netutil.NetError, gmail.MailConfigError) as e:
+                log.warning("최근 메일 요약 건너뜀: %s", e)
+        seen_keys = set()
+        for f in mail:
+            if f.key not in seen_keys:
+                seen_keys.add(f.key)
+                findings.append(f)
     return findings
 
 
@@ -108,7 +141,7 @@ def run(
     path = cfg.resolved_state_path()
     if not send:
         state = State(path)
-        new = [f for f in collect(cfg, now, fetch) if _is_new(state, f)]
+        new = [f for f in collect(cfg, now, fetch, include_recent=True) if _is_new(state, f)]  # preview ignores the slot
         if not new:
             log.info("새로 알릴 것이 없습니다.")  # silence is the normal case
             return 0
@@ -116,12 +149,19 @@ def run(
         log.info("드라이런: 전송하지 않았고 상태도 바꾸지 않았습니다. (--send 로 실제 전송)")
         return 0
 
-    findings = collect(cfg, now, fetch)  # slow network work stays outside the lock
+    slot = mail_slot(cfg, now) if cfg.mail_enabled else None
+    slot_due = bool(slot) and not State(path).is_seen(slot)
+    status: dict = {}
+    findings = collect(cfg, now, fetch, include_recent=slot_due, mail_status=status)  # slow network work stays outside the lock
+    mark_slot = slot_due and bool(status.get("recent_ok"))
     try:
         with locked(path):
             state = State(path)  # re-read inside the lock: poll may have written meanwhile
             new = [f for f in findings if _is_new(state, f)]
             if not new:
+                if mark_slot:
+                    state.mark(slot, now)  # this slot's check is done even though nothing new was found
+                    state.save()
                 log.info("새로 알릴 것이 없습니다.")
                 return 0
             batch = new[: cfg.max_items_per_digest]
@@ -135,6 +175,8 @@ def run(
             all_keys = [k for f in batch for k in _keys(f)]
             for k in all_keys:
                 state.mark(k, now)
+            if mark_slot and len(new) <= len(batch):
+                state.mark(slot, now)  # leftovers (if any) keep the slot open for the next check
             state.add_digest(digest_id, all_keys, now)
             state.prune(now)
             state.save()
