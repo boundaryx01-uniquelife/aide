@@ -209,6 +209,35 @@ class NetutilTests(unittest.TestCase):
                 with self.assertRaises(netutil.NetError, msg=url):
                     netutil.get_json(url)
 
+    def fake_open(self, body, ctype="application/json"):
+        import io
+        from unittest import mock
+
+        class R(io.BytesIO):
+            headers = {"Content-Type": ctype}
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        opener = mock.Mock()
+        opener.open.return_value = R(body)
+        return mock.patch("urllib.request.build_opener", return_value=opener)
+
+    def test_empty_body_is_empty_object(self):
+        with self.fake_open(b"  \n"):
+            self.assertEqual(netutil.get_json("https://x.example/a"), {})
+
+    def test_bad_json_reports_size_and_type_but_not_body(self):
+        with self.fake_open(b"<html>SECRETBODY</html>", "text/html; charset=utf-8"):
+            with self.assertRaises(netutil.NetError) as cm:
+                netutil.get_json("https://x.example/a")
+        msg = str(cm.exception)
+        self.assertIn("길이 23", msg)
+        self.assertIn("text/html", msg)
+        self.assertNotIn("SECRETBODY", msg)
+
+    def test_good_json_still_parses(self):
+        with self.fake_open(b'{"a": 1}'):
+            self.assertEqual(netutil.get_json("https://x.example/a"), {"a": 1})
+
     def test_redirects_are_not_followed(self):
         import urllib.request
         h = netutil._NoRedirect()

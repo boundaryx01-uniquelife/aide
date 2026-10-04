@@ -29,16 +29,20 @@ def _open(req: urllib.request.Request, timeout: float) -> Any:
     try:
         with opener.open(req, timeout=timeout) as resp:
             raw = resp.read(MAX_BYTES + 1)
+            ctype = (resp.headers.get("Content-Type") or "?").split(";")[0].strip()[:40]
     except urllib.error.HTTPError as e:
         raise NetError(f"HTTP {e.code}", status=e.code) from None
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise NetError(f"연결 실패: {type(e).__name__}") from None
     if len(raw) > MAX_BYTES:
         raise NetError("응답이 너무 큽니다.")
+    if not raw.strip():
+        return {}  # an empty 200 body means "nothing to list"
     try:
         return json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
-        raise NetError("응답을 해석할 수 없습니다.") from None
+        # size and content type only: the body itself may hold secrets
+        raise NetError(f"응답을 해석할 수 없습니다 (길이 {len(raw)}, {ctype}).") from None
 
 
 def get_json(url: str, headers: Optional[Dict[str, str]] = None, timeout: float = 15) -> Any:
