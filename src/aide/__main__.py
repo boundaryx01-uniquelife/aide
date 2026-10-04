@@ -8,7 +8,7 @@ import time
 
 from . import __version__
 from .config import ConfigError, load_config, load_dotenv
-from . import google_auth, inbox, morning, telegram
+from . import evening, google_auth, inbox, morning, telegram
 from .heartbeat import run
 from .state import StateLocked
 
@@ -27,6 +27,11 @@ def main(argv=None) -> int:
     mo.add_argument("--send", action="store_true", help="실제 전송 (기본은 미리보기)")
     mo.add_argument("--force", action="store_true", help="조용한 시간대에도 실행")
     mo.add_argument("--config", help="설정 파일 경로")
+
+    ev = sub.add_parser("evening", help="저녁 정리 (내일 일정·마감 임박·오늘 작업, 하루 한 번)")
+    ev.add_argument("--send", action="store_true", help="실제 전송 (기본은 미리보기)")
+    ev.add_argument("--force", action="store_true", help="시각·조용한 시간·중복 확인 무시")
+    ev.add_argument("--config", help="설정 파일 경로")
 
     pl = sub.add_parser("poll", help="텔레그램 버튼 응답을 받아 기록 (읽기 전용)")
     pl.add_argument("--watch", action="store_true", help="계속 대기하며 즉시 처리 (Ctrl+C 로 종료)")
@@ -60,6 +65,7 @@ def main(argv=None) -> int:
         print(f"TELEGRAM_BOT_TOKEN: {'설정됨' if os.environ.get('TELEGRAM_BOT_TOKEN') else '없음'}")
         print(f"TELEGRAM_CHAT_ID  : {'설정됨' if os.environ.get('TELEGRAM_CHAT_ID') else '없음'}")
         print(f"mail             : {'켜짐' if cfg.mail_enabled else '꺼짐'} / 허용 발신자 {len(cfg.mail_senders)}개 / 시간대 요약 {cfg.mail_recent_hours or '없음'}")
+        print(f"evening          : {cfg.evening_hour}시 이후 하루 한 번" if cfg.evening_hour is not None else "evening          : 꺼짐")
         print(f"weather          : {'켜짐' if cfg.weather_enabled else '꺼짐'}")
         print(f"calendar         : {'켜짐' if cfg.calendar_enabled else '꺼짐'}"
               f" / client {'있음' if cfg.resolved_google_client().exists() else '없음'}"
@@ -96,6 +102,9 @@ def main(argv=None) -> int:
 
     if args.cmd == "morning":
         return morning.run(cfg, send=args.send, force=args.force)
+
+    if args.cmd == "evening":
+        return evening.run(cfg, send=args.send, force=args.force)
 
     if args.cmd == "poll":
         return _poll(cfg, watch=args.watch)

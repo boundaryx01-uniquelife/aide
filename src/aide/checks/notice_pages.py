@@ -105,16 +105,9 @@ def _key(page_url: str, title: str) -> str:
     return f"notice:{h}"
 
 
-def check(
-    pages: Iterable[str],
-    keywords: List[str],
-    fetch: Callable[[str], bytes],
-    now: datetime,
-    max_per_page: int = 5,
-) -> List[Finding]:
+def _scan(pages, keywords, fetch, today: date, max_per_page: int):
+    """Yield (page, title, link, due, left) for each matching, still-open notice."""
     kws = [k.lower() for k in keywords if k.strip()]
-    today = now.date()
-    out: List[Finding] = []
     for page in pages:
         try:
             html = decode(fetch(page))
@@ -137,12 +130,30 @@ def check(
             if taken >= max_per_page:
                 break
             taken += 1
-            base = _key(page, title)
-            stage = "" if left is None or left > 3 else (":d1" if left <= 1 else ":d3")
             link = urljoin(page, href) if href and not href.lower().startswith(("javascript:", "#")) else page
             if urlparse(link).scheme not in ("http", "https"):
                 link = page
-            prefix = {"": "", ":d3": "마감 임박(D-%d) " % (left or 0), ":d1": "마감 임박(D-%d) " % (left or 0)}[stage]
-            detail = f"접수 ~{due:%m/%d} (D-{left})" if due else ""
-            out.append(Finding(key=base + stage, source="notice", title=prefix + title, detail=detail, url=link))
+            yield page, title, link, due, left
+
+
+def check(
+    pages: Iterable[str],
+    keywords: List[str],
+    fetch: Callable[[str], bytes],
+    now: datetime,
+    max_per_page: int = 5,
+) -> List[Finding]:
+    out: List[Finding] = []
+    for page, title, link, due, left in _scan(pages, keywords, fetch, now.date(), max_per_page):
+        stage = "" if left is None or left > 3 else (":d1" if left <= 1 else ":d3")
+        prefix = f"마감 임박(D-{left}) " if stage else ""
+        detail = f"접수 ~{due:%m/%d} (D-{left})" if due else ""
+        out.append(Finding(key=_key(page, title) + stage, source="notice", title=prefix + title, detail=detail, url=link))
     return out
+
+
+def upcoming(pages, keywords, fetch, now: datetime, within_days: int = 3):
+    """[(title, due, days_left, link)] of open notices whose deadline is within `within_days`, soonest first."""
+    rows = [(t, d, left, link) for _, t, link, d, left in _scan(pages, keywords, fetch, now.date(), 50)
+            if d is not None and left <= within_days]
+    return sorted(rows, key=lambda r: (r[2], r[0]))

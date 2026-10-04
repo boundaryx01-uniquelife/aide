@@ -35,6 +35,7 @@ class Config:
     mail_recent_window_hours: int = 12
     mail_recent_max: int = 5
     mail_block: List[str] = field(default_factory=list)         # senders to leave out of the digest
+    evening_hour: Optional[int] = None   # e.g. 20: one evening wrap-up at/after 20:00
     weather_enabled: bool = False
     latitude: float = 35.2      # Busan Dongnae (approx.)
     longitude: float = 129.08
@@ -92,6 +93,10 @@ def load_config(path: Optional[Path] = None) -> Config:
         raise ConfigError("git_dirty_threshold / max_items_per_digest / news_max_age_hours 는 1 이상이어야 합니다.")
     if not (-90 <= cfg.latitude <= 90 and -180 <= cfg.longitude <= 180):
         raise ConfigError("latitude / longitude 범위가 올바르지 않습니다.")
+    if cfg.evening_hour is not None and (
+        not isinstance(cfg.evening_hour, int) or isinstance(cfg.evening_hour, bool) or not 0 <= cfg.evening_hour <= 23
+    ):
+        raise ConfigError("evening_hour 는 0~23 사이 정수여야 합니다 (예: 20).")
     if any(not isinstance(h, int) or isinstance(h, bool) or not 0 <= h <= 23 for h in cfg.mail_recent_hours):
         raise ConfigError("mail_recent_hours 는 0~23 사이 정수 목록이어야 합니다 (예: [8, 18]).")
     return cfg
