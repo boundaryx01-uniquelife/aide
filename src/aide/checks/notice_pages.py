@@ -105,9 +105,10 @@ def _key(page_url: str, title: str) -> str:
     return f"notice:{h}"
 
 
-def _scan(pages, keywords, fetch, today: date, max_per_page: int):
+def _scan(pages, keywords, fetch, today: date, max_per_page: int, exclude=()):
     """Yield (page, title, link, due, left) for each matching, still-open notice."""
     kws = [k.lower() for k in keywords if k.strip()]
+    excl = [k.lower() for k in exclude if k.strip()]
     for page in pages:
         try:
             html = decode(fetch(page))
@@ -119,6 +120,8 @@ def _scan(pages, keywords, fetch, today: date, max_per_page: int):
             title = clean(raw_title, 120)
             if len(title) < MIN_TITLE or not any(k in title.lower() for k in kws):
                 continue
+            if any(k in title.lower() for k in excl):
+                continue  # excluded topic: must not use up the per-page slots
             if not _ANY_DATE.search(row.replace(raw_title, " ", 1)):
                 continue  # no date in the row -> navigation, not a notice
             if "접수마감" in row or "마감됨" in row:
@@ -142,9 +145,10 @@ def check(
     fetch: Callable[[str], bytes],
     now: datetime,
     max_per_page: int = 5,
+    exclude: Iterable[str] = (),
 ) -> List[Finding]:
     out: List[Finding] = []
-    for page, title, link, due, left in _scan(pages, keywords, fetch, now.date(), max_per_page):
+    for page, title, link, due, left in _scan(pages, keywords, fetch, now.date(), max_per_page, exclude):
         stage = "" if left is None or left > 3 else (":d1" if left <= 1 else ":d3")
         prefix = f"마감 임박(D-{left}) " if stage else ""
         detail = f"접수 ~{due:%m/%d} (D-{left})" if due else ""
@@ -152,8 +156,8 @@ def check(
     return out
 
 
-def upcoming(pages, keywords, fetch, now: datetime, within_days: int = 3):
+def upcoming(pages, keywords, fetch, now: datetime, within_days: int = 3, exclude=()):
     """[(title, due, days_left, link)] of open notices whose deadline is within `within_days`, soonest first."""
-    rows = [(t, d, left, link) for _, t, link, d, left in _scan(pages, keywords, fetch, now.date(), 50)
+    rows = [(t, d, left, link) for _, t, link, d, left in _scan(pages, keywords, fetch, now.date(), 50, exclude)
             if d is not None and left <= within_days]
     return sorted(rows, key=lambda r: (r[2], r[0]))

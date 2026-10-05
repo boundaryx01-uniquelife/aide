@@ -27,6 +27,7 @@ class Config:
     notice_pages: List[str] = field(default_factory=list)
     notice_keywords: List[str] = field(default_factory=lambda: [
         "공모", "모집", "신청", "접수", "연수", "공고", "대회", "전시회", "지원사업", "발명", "메이커"])
+    notice_exclude: List[str] = field(default_factory=list)   # title words to drop (e.g. 임용, 수능)
     notice_max_per_page: int = 5
     mail_enabled: bool = False
     mail_senders: List[str] = field(default_factory=list)   # domains (pen.go.kr) or addresses

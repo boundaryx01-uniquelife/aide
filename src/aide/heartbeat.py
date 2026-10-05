@@ -61,7 +61,7 @@ def collect(
         cfg.news_feeds, cfg.news_keywords, fetch, now=now, max_age_hours=cfg.news_max_age_hours
     )
     findings += notice_pages.check(
-        cfg.notice_pages, cfg.notice_keywords, fetch, now, cfg.notice_max_per_page
+        cfg.notice_pages, cfg.notice_keywords, fetch, now, cfg.notice_max_per_page, cfg.notice_exclude
     )
     want_recent = include_recent and bool(cfg.mail_recent_hours)
     if cfg.mail_enabled and (cfg.mail_senders or want_recent):

@@ -86,7 +86,7 @@ def main(argv=None) -> int:
                 print(f"[{page}] {e}")
                 continue
             found = notice_pages.check([page], cfg.notice_keywords, news_keywords.fetch_feed,
-                                       datetime.now(), cfg.notice_max_per_page)
+                                       datetime.now(), cfg.notice_max_per_page, cfg.notice_exclude)
             print(f"[{page}] 링크 {n}개 중 {len(found)}건 선택")
             for f in found:
                 print(f"  • {f.title}" + (f"  ({f.detail})" if f.detail else ""))

@@ -61,7 +61,7 @@ def _deadline_section(cfg: Config, now: datetime, fetch) -> List[str]:
     if not cfg.notice_pages:
         return []
     days = WEEK_DEADLINE_DAYS if _is_weekly(now) else DEADLINE_DAYS
-    rows = notice_pages.upcoming(cfg.notice_pages, cfg.notice_keywords, fetch, now, days)
+    rows = notice_pages.upcoming(cfg.notice_pages, cfg.notice_keywords, fetch, now, days, cfg.notice_exclude)
     out = [f"■ 마감 임박 ({days}일 이내)"]
     out += [f"• D-{left} {title} (~{due:%m/%d})" for title, due, left, _ in rows] or ["없어요."]
     return out + [""]

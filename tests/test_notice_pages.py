@@ -170,6 +170,52 @@ class MoreEdgeTests(unittest.TestCase):
         self.assertEqual(self.one(html)[0].detail, "접수 ~10/20 (D-16)")
 
 
+class ExcludeTests(unittest.TestCase):
+    ROWS = (
+        '<table>'
+        '<tr><td><a href="/v?id=1">임용시험 일일원서접수현황 모집 안내</a></td><td>2026-10-03</td></tr>'
+        '<tr><td><a href="/v?id=2">수능 시행세부계획 접수 안내문 공고</a></td><td>2026-10-03</td></tr>'
+        '<tr><td><a href="/v?id=3">발명교육 직무연수 참가자 모집 공고</a></td><td>2026-10-03</td></tr>'
+        '<tr><td><a href="/v?id=4">메이커교육 지원사업 공모 안내문</a></td><td>2026-10-02</td></tr>'
+        '</table>'
+    )
+
+    def run_check(self, exclude, cap=5):
+        return np.check([PAGE], ["모집", "접수", "공모"], fetch_for(self.ROWS), NOW, cap, exclude)
+
+    def test_default_excludes_nothing(self):
+        self.assertEqual(len(np.check([PAGE], ["모집", "접수", "공모"], fetch_for(self.ROWS), NOW, 5)), 4)
+
+    def test_excluded_words_dropped(self):
+        titles = [f.title for f in self.run_check(["임용", "수능"])]
+        self.assertEqual(len(titles), 2)
+        self.assertFalse(any("임용" in x or "수능" in x for x in titles))
+
+    def test_case_and_blank_entries(self):
+        self.assertEqual(len(self.run_check(["", "  ", "임용"])), 3)   # blanks must not exclude everything
+        rows = self.ROWS.replace("임용시험", "IMYONG test")
+        kept = np.check([PAGE], ["모집"], fetch_for(rows), NOW, 5)
+        got = np.check([PAGE], ["모집"], fetch_for(rows), NOW, 5, ["imyong"])
+        self.assertEqual(len(kept) - len(got), 1)                       # exactly the IMYONG row, matched case-insensitively
+        self.assertFalse(any("IMYONG" in f.title for f in got))
+
+    def test_excluded_do_not_use_page_slots(self):
+        got = self.run_check(["임용", "수능"], cap=2)
+        self.assertEqual(len(got), 2)       # both non-excluded rows still make it under cap=2
+
+    def test_exclude_applies_to_upcoming(self):
+        rows = ('<table><tr><td><a href="/v?id=1">임용 공모 접수</a></td><td>2026-10-03 ~2026-10-05</td></tr>'
+                '<tr><td><a href="/v?id=2">발명 공모 접수 공고</a></td><td>2026-10-03 ~2026-10-05</td></tr></table>')
+        got = np.upcoming([PAGE], ["공모"], fetch_for(rows), NOW, 3, ["임용"])
+        self.assertEqual([r[0] for r in got], ["발명 공모 접수 공고"])
+
+    def test_config_key_and_heartbeat_wiring(self):
+        cfg = Config(notice_pages=[PAGE], notice_keywords=["모집", "접수", "공모"], notice_exclude=["임용", "수능"])
+        out = heartbeat.collect(cfg, NOW, fetch_for(self.ROWS))
+        notice = [f for f in out if f.source == "notice"]
+        self.assertEqual(len(notice), 2)
+
+
 class IntegrationTests(unittest.TestCase):
     def test_collect_and_digest(self):
         cfg = Config(notice_pages=[PAGE], notice_keywords=KW)
