@@ -1,0 +1,19 @@
+[Unit]
+Description=aide 30-minute check (poll, heartbeat, morning, evening)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=aide
+WorkingDirectory=/home/aide/aide
+Environment=TZ=Asia/Seoul
+ExecStart=/bin/bash /home/aide/aide/scripts/run_heartbeat.sh
+# Small shared server: aide must be the first thing to give way, never the other apps.
+Nice=10
+MemoryMax=150M
+OOMScoreAdjust=500
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/aide/aide/data

@@ -1,0 +1,24 @@
+[Unit]
+Description=aide instant button handling (Telegram getUpdates, the only reader)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=aide
+WorkingDirectory=/home/aide/aide
+Environment=TZ=Asia/Seoul PYTHONPATH=/home/aide/aide/src PYTHONUTF8=1 PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m aide poll --watch
+StandardOutput=append:/home/aide/aide/data/poll_watch.log
+StandardError=inherit
+Restart=on-failure
+RestartSec=30
+Nice=10
+MemoryMax=100M
+OOMScoreAdjust=500
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/aide/aide/data
+
+[Install]
+WantedBy=multi-user.target

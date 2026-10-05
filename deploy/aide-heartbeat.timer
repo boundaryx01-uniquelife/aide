@@ -1,0 +1,11 @@
+[Unit]
+Description=Run aide every 30 minutes
+
+[Timer]
+# :07 and :37 keep clear of the other jobs on this server that start on :00/:30
+OnCalendar=*:07,37
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
