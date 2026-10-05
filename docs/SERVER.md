@@ -86,5 +86,8 @@ tail -n 20 /home/aide/aide/data/aide.log
 
 ## 메모
 - 코드 갱신: 서버에서 `sudo -u aide git -C /home/aide/aide pull`, 서비스는 `systemctl restart aide-watch`.
+  유닛 파일(`deploy/*.service`)이 바뀐 경우에는 `cp deploy/aide-watch.service /etc/systemd/system/ && systemctl daemon-reload` 후 재시작.
+- 감시가 꺼졌는지 보기: `systemctl is-active aide-watch.service` (active 여야 함), 로그 `data/poll_watch.log` 의 "버튼 응답 대기 중".
+  (2026-10-05: 재시작이 SIGTERM 으로 잠금 파일을 남겨 새 감시가 조용히 종료 → SIGTERM 처리와 `Restart=always` 로 수정)
 - 서버에서는 "어제 작업" 항목이 비게 된다. 해당 항목을 `watch_repos` 가 비어 있으면 생략하도록 바꾸거나, GitHub 에서 커밋을 읽도록 확장하는 것은 별도 작업(로드맵 F 이전에 결정).
 - 보안: 서버 침해 시 구글 토큰·텔레그램 토큰이 노출될 수 있다. 전용 계정(700), 읽기 전용 배포 키, 열린 포트 없음으로 줄인다. 위험 수용 내용은 SECURITY.md 에 기록.

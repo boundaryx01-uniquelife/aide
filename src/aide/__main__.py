@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import signal
 import sys
 import time
 
@@ -135,6 +136,14 @@ def _poll(cfg, *, watch: bool) -> int:
         return 0
     wait = 5
     log.info("버튼 응답 대기 중... (Ctrl+C 로 종료)")
+
+    def _on_term(signum, frame):  # systemd stop/restart sends SIGTERM: leave through `finally` so the lock is released
+        raise KeyboardInterrupt
+
+    try:
+        old_term = signal.signal(signal.SIGTERM, _on_term)
+    except (ValueError, OSError):   # not the main thread / unsupported: keep the default
+        old_term = None
     try:
         while True:
             inbox.touch_watcher(cfg)
@@ -151,6 +160,8 @@ def _poll(cfg, *, watch: bool) -> int:
         return 0
     finally:
         inbox.release_watcher(cfg)
+        if old_term is not None:
+            signal.signal(signal.SIGTERM, old_term)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 import _bootstrap  # noqa: F401
+import os
 import tempfile
+import time
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -264,6 +266,32 @@ class WatcherLockTests(unittest.TestCase):
                 mock.patch.object(inbox, "poll_once", side_effect=stop):
             self.assertEqual(cli._poll(self.cfg, watch=True), 0)
         self.assertFalse(inbox.watcher_active(self.cfg))
+
+
+class SigtermTests(unittest.TestCase):
+    """systemd restarts the watcher with SIGTERM. If that skipped the `finally`, the stale lock
+    made the new watcher think another one was running and exit quietly (found on the server)."""
+
+    @unittest.skipIf(os.name == "nt", "POSIX signals")
+    def test_sigterm_releases_lock_and_restores_handler(self):
+        from unittest import mock
+        import signal
+        import aide.__main__ as cli
+
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Config(state_path=str(Path(d) / "state.json"))
+            before = signal.getsignal(signal.SIGTERM)
+
+            def term(*a, **k):
+                self.assertTrue(inbox.watcher_active(cfg))
+                os.kill(os.getpid(), signal.SIGTERM)
+                time.sleep(1)           # the handler fires here and raises KeyboardInterrupt
+
+            with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "1"}), \
+                    mock.patch.object(inbox, "poll_once", side_effect=term):
+                self.assertEqual(cli._poll(cfg, watch=True), 0)
+            self.assertFalse(inbox.watcher_active(cfg))                 # lock gone -> a restarted watcher can start
+            self.assertEqual(signal.getsignal(signal.SIGTERM), before)  # handler restored
 
 
 class ButtonTests(unittest.TestCase):

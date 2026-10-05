@@ -10,7 +10,7 @@ Environment=TZ=Asia/Seoul PYTHONPATH=/home/aide/aide/src PYTHONUTF8=1 PYTHONDONT
 ExecStart=/usr/bin/python3 -m aide poll --watch
 StandardOutput=append:/home/aide/aide/data/poll_watch.log
 StandardError=inherit
-Restart=on-failure
+Restart=always
 RestartSec=30
 Nice=10
 MemoryMax=100M
