@@ -49,19 +49,20 @@ def build_message(cfg: Config, now: datetime, *, fetch_weather=weather.today, fe
     day = (now - timedelta(days=1)).date()
     lines = [f"좋은 아침이에요 · {now:%m/%d}({WEEKDAYS[now.weekday()]})", ""]
     lines += _today_section(cfg, now, fetch_weather, fetch_events)
-    lines.append(f"■ 어제({day:%m/%d}) 작업")
-    any_work = False
-    for repo in cfg.watch_repos:
-        subjects = yesterday.commits_on(Path(repo), day)
-        if not subjects:
-            continue
-        any_work = True
-        lines.append(f"• {Path(repo).name}: 커밋 {len(subjects)}개")
-        lines += [f"  - {s}" for s in subjects[:MAX_COMMITS_SHOWN]]
-        if len(subjects) > MAX_COMMITS_SHOWN:
-            lines.append(f"  …외 {len(subjects) - MAX_COMMITS_SHOWN}개")
-    if not any_work:
-        lines.append("커밋 기록이 없어요.")
+    if cfg.watch_repos:   # no folders configured (e.g. on the server): leave the section out instead of claiming "no commits"
+        lines.append(f"■ 어제({day:%m/%d}) 작업")
+        any_work = False
+        for repo in cfg.watch_repos:
+            subjects = yesterday.commits_on(Path(repo), day)
+            if not subjects:
+                continue
+            any_work = True
+            lines.append(f"• {Path(repo).name}: 커밋 {len(subjects)}개")
+            lines += [f"  - {s}" for s in subjects[:MAX_COMMITS_SHOWN]]
+            if len(subjects) > MAX_COMMITS_SHOWN:
+                lines.append(f"  …외 {len(subjects) - MAX_COMMITS_SHOWN}개")
+        if not any_work:
+            lines.append("커밋 기록이 없어요.")
 
     pending: List[str] = []
     for repo in cfg.watch_repos:
@@ -70,7 +71,7 @@ def build_message(cfg: Config, now: datetime, *, fetch_weather=weather.today, fe
             pending.append(f"• {Path(repo).name}: 커밋 안 된 변경 {n}개")
     if pending:
         lines += ["", "■ 이어서 할 일"] + pending
-    return "\n".join(lines)
+    return "\n".join(lines).rstrip()
 
 
 def run(

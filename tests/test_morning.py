@@ -87,8 +87,16 @@ class MorningTests(unittest.TestCase):
         self.assertIn("fix login bug", msg)
 
     def test_no_commits_says_so(self):
+        with mock.patch.object(yesterday, "commits_on", lambda r, d: []):
+            self.assertIn("커밋 기록이 없어요", morning.build_message(self.cfg, TODAY))
+
+    def test_no_folders_leaves_section_out(self):
         self.cfg.watch_repos = []
-        self.assertIn("커밋 기록이 없어요", morning.build_message(self.cfg, TODAY))
+        m = morning.build_message(self.cfg, TODAY)
+        self.assertNotIn("작업", m)
+        self.assertNotIn("커밋 기록이 없어요", m)
+        self.assertEqual(m, m.rstrip())      # no dangling blank line
+        self.assertIn("좋은 아침이에요", m)
 
     def test_many_commits_are_capped(self):
         for i in range(8):

@@ -60,6 +60,13 @@ class BuildTests(unittest.TestCase):
             return evening.build_message(cfg, now or NOW, fetch_events=lambda t, n: events if events is not None else [],
                                          fetch=fetch, **kw)
 
+    def test_no_folders_leaves_section_out(self):
+        m = evening.build_message(Config(), NOW, fetch_events=lambda t, n: [], fetch=lambda u: b"")
+        self.assertIn("저녁 정리", m)
+        self.assertNotIn("오늘 작업", m)
+        self.assertNotIn("커밋 기록이 없어요", m)
+        self.assertEqual(m, m.rstrip())
+
     def test_minimal_message(self):
         m = self.build(self.cfg())
         self.assertIn("저녁 정리 · 10/04(일)", m)
@@ -156,7 +163,7 @@ class WeeklyTests(unittest.TestCase):
              mock.patch.object(ga, "access_token", return_value="T"):
             m = evening.build_message(self.cfg(calendar_enabled=True), NOW, fetch=fetch, fetch_week=bad)
         self.assertIn("불러오지 못했어요", m)
-        self.assertIn("오늘 작업", m)
+        self.assertNotIn("오늘 작업", m)     # no folders configured -> section left out
 
     def test_other_days_stay_daily(self):
         for now in (SAT, datetime(2026, 10, 5, 20, 0), datetime(2026, 10, 10, 20, 0)):

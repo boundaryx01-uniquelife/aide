@@ -133,7 +133,7 @@ class WeatherTests(unittest.TestCase):
 
 class MorningSectionTests(unittest.TestCase):
     def cfg(self, **kw):
-        return Config(**kw)
+        return Config(watch_repos=["C:/x/none"], **kw)   # a folder is configured, so the work section shows
 
     def test_off_by_default_leaves_message_unchanged(self):
         def boom(*a):
