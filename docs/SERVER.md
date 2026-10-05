@@ -60,8 +60,10 @@ sudo -u aide env TZ=Asia/Seoul PYTHONPATH=src python3 -m aide evening --force
 ## 5. 전환 (PC 를 먼저 끄고, 상태 파일을 옮긴 뒤, 서버를 켠다)
 PC (PowerShell)
 ```powershell
-Disable-ScheduledTask -TaskName aide-heartbeat, aide-poll-watch
+Disable-ScheduledTask -TaskName aide-poll-watch      # 1분마다 감시를 되살리는 작업이라 먼저 끈다 (한 번에 하나씩: 두 개를 쉼표로 묶으면 오류)
+Disable-ScheduledTask -TaskName aide-heartbeat
 Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*aide*poll*--watch*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+Get-ScheduledTask -TaskName "aide-*" | Select-Object TaskName, State      # 둘 다 Disabled 여야 한다
 scp C:\dev\aide\data\state.json root@서버IP:/home/aide/aide/data/
 ```
 서버 (root)
@@ -79,7 +81,7 @@ systemctl list-timers aide-heartbeat.timer --no-pager
 systemctl status aide-watch --no-pager | head -5
 tail -n 20 /home/aide/aide/data/aide.log
 ```
-- 되돌리기: 서버 `systemctl disable --now aide-watch.service aide-heartbeat.timer`, PC `Enable-ScheduledTask -TaskName aide-heartbeat, aide-poll-watch`. 둘이 동시에 켜져 있으면 안 된다.
+- 되돌리기: 서버 `systemctl disable --now aide-watch.service aide-heartbeat.timer`, PC `Enable-ScheduledTask -TaskName aide-poll-watch` 와 `Enable-ScheduledTask -TaskName aide-heartbeat` (각각 따로). 둘이 동시에 켜져 있으면 안 된다.
 - 며칠 안정적이면 PC 쪽 작업을 영구 삭제하거나 비활성으로 둔다.
 
 ## 메모
