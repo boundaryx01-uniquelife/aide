@@ -37,7 +37,7 @@
 - 에이전트용 토큰(GitHub 등)은 필요한 저장소·권한만 가진 것을 쓴다.
 
 ## Google OAuth (일정 읽기)
-- 권한은 `calendar.readonly` 만 요청. 토큰은 `data/google_token.json`(깃 제외, 가능하면 600).
+- 권한은 `calendar.readonly` 만 요청. 토큰은 `data/google_token*.json`(계정별 파일, 깃 제외, 가능하면 600).
 - 로그인은 로컬 루프백(127.0.0.1)+PKCE+state 검증. 토큰/인증코드는 로그·메시지에 출력하지 않음.
 - Google 호스트(accounts.google.com, oauth2.googleapis.com)만 허용, 리다이렉트 불추종, https 전용, 응답 1MB 제한.
 - 일정 제목은 외부 텍스트: clean() 후 표시(향후 LLM 단계에서도 데이터로만 취급).

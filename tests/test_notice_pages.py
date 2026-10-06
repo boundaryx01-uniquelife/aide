@@ -241,7 +241,10 @@ class CliTests(unittest.TestCase):
             cfgp = Path(d) / "c.json"
             cfgp.write_text(json.dumps({"notice_keywords": ["모집", "연수"]}), encoding="utf-8")
             buf = io.StringIO()
-            with mock.patch("aide.checks.news_keywords.fetch_feed", lambda u: TABLE.encode()), redirect_stdout(buf):
+            # the CLI uses the real clock, so the deadline must stay in the future (a fixed 2026 date went stale)
+            live = ('<table><tr><td><a href="/v?id=2">2026년 교원 발명교육 직무연수 안내</a></td>'
+                    '<td>2026-10-01 ~ 2099-12-31</td></tr></table>')
+            with mock.patch("aide.checks.news_keywords.fetch_feed", lambda u: live.encode()), redirect_stdout(buf):
                 rc = cli.main(["notices", PAGE, "--config", str(cfgp)])
         out = buf.getvalue()
         self.assertEqual(rc, 0)

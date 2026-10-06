@@ -27,3 +27,5 @@ data/*.lock
 data/google_client.json
 data/google_token.json
 data/google_token.json.tmp
+data/google_token*.json
+data/google_token*.json.tmp

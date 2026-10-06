@@ -37,7 +37,7 @@ sudo -u aide mkdir -p /home/aide/aide/data
 ```powershell
 cd C:\dev\aide
 scp .env config.json root@서버IP:/home/aide/aide/
-scp data\google_client.json data\google_token.json root@서버IP:/home/aide/aide/data/
+scp data\google_client.json data\google_token*.json root@서버IP:/home/aide/aide/data/
 ```
 ```bash
 # 서버 (root)

@@ -97,3 +97,6 @@ python -m unittest discover -s tests -v
 - **일요일 저녁**에는 "내일 일정" 대신 **다음 주(월~일) 일정**을 날짜별로 보여 주고, 마감 임박 범위도 7일로 넓힙니다.
 - 조용한 시간(22:30~)에는 보내지 않고, 실패하면 다음 점검에서 재시도합니다. `run_heartbeat.bat` 이 함께 실행하므로 별도 예약은 필요 없습니다.
 - 미리보기: `python -m aide evening` (시각 무관, 전송·기록 없음) / 지금 바로 보내기: `python -m aide evening --send --force`
+
+## 여러 구글 계정
+메일·일정을 여러 구글 계정에서 함께 받으려면 `docs/GOOGLE_SETUP.md` 의 "계정이 여러 개일 때" 를 따르세요.

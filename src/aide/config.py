@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -11,6 +12,20 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class ConfigError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class Account:
+    """One Google account whose calendar/mail is read. `name` is the label shown in messages
+    ("" when only one account is configured); `email` is only used to build mail links."""
+
+    name: str
+    token_path: Path
+    email: str = ""
+
+
+_EMAIL = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+MAX_ACCOUNTS = 8
 
 
 @dataclass
@@ -43,6 +58,9 @@ class Config:
     calendar_enabled: bool = False
     google_client_path: str = "data/google_client.json"
     google_token_path: str = "data/google_token.json"
+    # Several Google accounts: [{"name": "개인", "token_path": "data/google_token.json", "email": "me@gmail.com"}, ...]
+    # Empty = the single account at google_token_path (nothing changes for existing setups).
+    google_accounts: List[dict] = field(default_factory=list)
 
     def resolved_state_path(self) -> Path:
         return _resolve(self.state_path)
@@ -52,6 +70,11 @@ class Config:
 
     def resolved_google_token(self) -> Path:
         return _resolve(self.google_token_path)
+
+    def accounts(self) -> List[Account]:
+        if not self.google_accounts:
+            return [Account("", self.resolved_google_token())]
+        return [Account(a["name"], _resolve(a["token_path"]), a.get("email", "")) for a in self.google_accounts]
 
 
 def _resolve(value: str) -> Path:
@@ -100,4 +123,25 @@ def load_config(path: Optional[Path] = None) -> Config:
         raise ConfigError("evening_hour 는 0~23 사이 정수여야 합니다 (예: 20).")
     if any(not isinstance(h, int) or isinstance(h, bool) or not 0 <= h <= 23 for h in cfg.mail_recent_hours):
         raise ConfigError("mail_recent_hours 는 0~23 사이 정수 목록이어야 합니다 (예: [8, 18]).")
+    _check_accounts(cfg.google_accounts)
     return cfg
+
+
+def _check_accounts(accounts) -> None:
+    if not isinstance(accounts, list) or len(accounts) > MAX_ACCOUNTS:
+        raise ConfigError(f"google_accounts 는 계정 목록(최대 {MAX_ACCOUNTS}개)이어야 합니다.")
+    names, paths = set(), set()
+    for a in accounts:
+        if not isinstance(a, dict) or set(a) - {"name", "token_path", "email"}:
+            raise ConfigError('google_accounts 항목은 {"name", "token_path", "email"(선택)} 만 쓸 수 있습니다.')
+        name, path, email = a.get("name"), a.get("token_path"), a.get("email", "")
+        if not isinstance(name, str) or not name.strip() or len(name) > 20 or "\n" in name:
+            raise ConfigError("google_accounts 의 name 은 20자 이하의 비어 있지 않은 한 줄 글자여야 합니다.")
+        if not isinstance(path, str) or not path.strip():
+            raise ConfigError(f"google_accounts[{name}] 의 token_path 가 필요합니다.")
+        if not isinstance(email, str) or (email and not _EMAIL.match(email)):
+            raise ConfigError(f"google_accounts[{name}] 의 email 형식이 올바르지 않습니다.")
+        if name in names or path in paths:
+            raise ConfigError("google_accounts 의 name 과 token_path 는 서로 달라야 합니다.")
+        names.add(name)
+        paths.add(path)

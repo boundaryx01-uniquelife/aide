@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from . import gcal, google_auth, netutil, telegram
+from . import accounts, gcal, netutil, telegram
 from .checks import git_dirty, news_keywords, notice_pages, yesterday
 from .config import Config
 from .heartbeat import in_quiet_hours
@@ -36,24 +36,24 @@ def _calendar_section(cfg: Config, now: datetime, fetch_events, fetch_week) -> L
     first = (now + timedelta(days=1)).date()
     title = f"■ 다음 주 일정 ({first:%m/%d}~{first + timedelta(days=6):%m/%d})" if weekly else "■ 내일 일정"
     out = [title]
-    try:
-        token = google_auth.access_token(cfg.resolved_google_client(), cfg.resolved_google_token())
-        if weekly:
-            events = fetch_week(token, first, 7)
-            if not events:
-                out.append("일정이 없어요.")
-            last: Optional[date] = None
-            for e in events:
-                if e.day != last:
-                    last = e.day
-                    out.append(f"{e.day:%m/%d}({WEEKDAYS[e.day.weekday()]})" if e.day else "")
-                out.append(f"  • {e.when} {e.title}")
-        else:
-            events = fetch_events(token, now + timedelta(days=1))
-            out += [f"• {e.when} {e.title}" for e in events] or ["일정이 없어요."]
-    except (google_auth.GoogleAuthError, netutil.NetError) as e:
-        log.warning("일정 조회 실패: %s", e)
-        out.append("불러오지 못했어요 (로그 확인).")
+    if weekly:
+        events, failed, total = accounts.gather_events(
+            cfg, lambda token: fetch_week(token, first, 7), lambda e: (e.day or first, e.when != "종일", e.when))
+        if not events and not failed:
+            out.append("일정이 없어요.")
+        last: Optional[date] = None
+        for e in events:
+            if e.day != last:
+                last = e.day
+                out.append(f"{e.day:%m/%d}({WEEKDAYS[e.day.weekday()]})" if e.day else "")
+            out.append(f"  • {e.when} {e.title}")
+    else:
+        events, failed, total = accounts.gather_events(
+            cfg, lambda token: fetch_events(token, now + timedelta(days=1)), lambda e: (e.when != "종일", e.when))
+        out += [f"• {e.when} {e.title}" for e in events]
+        if not events and not failed:
+            out.append("일정이 없어요.")
+    out += accounts.failure_lines(failed, total)
     return out + [""]
 
 

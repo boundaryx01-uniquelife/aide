@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from . import gcal, google_auth, netutil, telegram, weather
+from . import accounts, gcal, netutil, telegram, weather
 from .checks import git_dirty, yesterday
 from .config import Config
 from .heartbeat import in_quiet_hours
@@ -31,17 +31,14 @@ def _today_section(cfg: Config, now: datetime, fetch_weather, fetch_events) -> L
         except netutil.NetError as e:
             log.warning("날씨 조회 실패: %s", e)
     if cfg.calendar_enabled:
-        try:
-            token = google_auth.access_token(cfg.resolved_google_client(), cfg.resolved_google_token())
-            events = fetch_events(token, now)
-            out.append("■ 오늘 일정")
-            if events:
-                out += [f"• {e.when} {e.title}" for e in events]
-            else:
-                out.append("일정이 없어요.")
-        except (google_auth.GoogleAuthError, netutil.NetError) as e:
-            log.warning("일정 조회 실패: %s", e)
-            out += ["■ 오늘 일정", "불러오지 못했어요 (로그 확인)."]
+        events, failed, total = accounts.gather_events(
+            cfg, lambda token: fetch_events(token, now), lambda e: (e.when != "종일", e.when))
+        out.append("■ 오늘 일정")
+        if events:
+            out += [f"• {e.when} {e.title}" for e in events]
+        elif not failed:
+            out.append("일정이 없어요.")
+        out += accounts.failure_lines(failed, total)
     return out + [""] if out else out
 
 

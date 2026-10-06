@@ -30,3 +30,18 @@
 5. 시험: `python -m aide heartbeat` (미리보기). 안 읽은 허용 발신자 메일이 있으면 "메일 (허용 발신자)" 묶음으로 나옵니다.
 - 로그인을 다시 하기 전에는 메일 기능이 "권한 없음"으로 건너뛰어지고 다른 알림은 정상 동작합니다.
 - 권한 철회: https://myaccount.google.com/permissions
+
+## 계정이 여러 개일 때 (메일·일정 합쳐서 받기)
+1. 계정마다 Google Auth Platform → 대상(Audience) → **테스트 사용자**에 그 주소를 추가한다. (학교·기관 관리 계정은 관리자가 외부 앱을 막았으면 로그인이 거부될 수 있다.)
+2. `config.json` 에 추가:
+   ```json
+   "google_accounts": [
+     {"name": "개인", "token_path": "data/google_token.json", "email": "내주소@gmail.com"},
+     {"name": "학교", "token_path": "data/google_token_school.json", "email": "학교주소@gmail.com"}
+   ]
+   ```
+   `email` 은 선택(메일 링크가 맞는 계정으로 열리게 함). 이름은 20자 이하·중복 불가, 최대 8개.
+3. 계정마다 PC 에서 로그인: `python -m aide google-login --account 개인` / `--account 학교` (브라우저에서 해당 계정 선택).
+4. 서버는 토큰 파일을 복사한 뒤 `chown aide:aide`, `chmod 600`.
+- 메시지에는 `[이름]` 표시가 붙고, 두 계정에 같은 일정이 있으면 `[개인·학교]` 로 한 번만 나온다. 한 계정이 실패해도 나머지는 정상 표시된다.
+- 계정이 하나면 `google_accounts` 를 비워 두면 기존과 동일하게 동작한다.
