@@ -69,6 +69,7 @@ def main(argv=None) -> int:
         print(f"mail             : {'켜짐' if cfg.mail_enabled else '꺼짐'} / 허용 발신자 {len(cfg.mail_senders)}개 / 시간대 요약 {cfg.mail_recent_hours or '없음'}")
         print(f"evening          : {cfg.evening_hour}시 이후 하루 한 번" if cfg.evening_hour is not None else "evening          : 꺼짐")
         print(f"weather          : {'켜짐' if cfg.weather_enabled else '꺼짐'}")
+        print(f"commands         : {', '.join(cfg.commands) if cfg.commands else '꺼짐'}")
         accts = cfg.accounts()
         if len(accts) == 1:
             print(f"calendar         : {'켜짐' if cfg.calendar_enabled else '꺼짐'}"

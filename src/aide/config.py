@@ -26,6 +26,9 @@ class Account:
 
 _EMAIL = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
 MAX_ACCOUNTS = 8
+# Stage 3b command names. Fixed set on purpose: `commands` in config.json can only
+# pick a subset of these, never introduce a new one.
+COMMAND_NAMES = ("오늘", "일정", "마감", "메일")
 
 
 @dataclass
@@ -61,6 +64,10 @@ class Config:
     # Several Google accounts: [{"name": "개인", "token_path": "data/google_token.json", "email": "me@gmail.com"}, ...]
     # Empty = the single account at google_token_path (nothing changes for existing setups).
     google_accounts: List[dict] = field(default_factory=list)
+    # Stage 3b: read-only commands the owner may type in the bot's own private chat
+    # (e.g. ["오늘", "일정", "마감", "메일"]). Empty (default) = feature off, behaviour
+    # unchanged from stage 3a (the bot never asks Telegram for plain chat messages at all).
+    commands: List[str] = field(default_factory=list)
 
     def resolved_state_path(self) -> Path:
         return _resolve(self.state_path)
@@ -124,7 +131,18 @@ def load_config(path: Optional[Path] = None) -> Config:
     if any(not isinstance(h, int) or isinstance(h, bool) or not 0 <= h <= 23 for h in cfg.mail_recent_hours):
         raise ConfigError("mail_recent_hours 는 0~23 사이 정수 목록이어야 합니다 (예: [8, 18]).")
     _check_accounts(cfg.google_accounts)
+    _check_commands(cfg.commands)
     return cfg
+
+
+def _check_commands(commands) -> None:
+    if not isinstance(commands, list) or any(not isinstance(c, str) for c in commands):
+        raise ConfigError("commands 는 문자열 목록이어야 합니다.")
+    unknown = sorted(set(commands) - set(COMMAND_NAMES))
+    if unknown:
+        raise ConfigError(f"commands 에 알 수 없는 명령이 있습니다: {unknown} (허용: {list(COMMAND_NAMES)})")
+    if len(set(commands)) != len(commands):
+        raise ConfigError("commands 에 같은 명령이 중복되어 있습니다.")
 
 
 def _check_accounts(accounts) -> None:

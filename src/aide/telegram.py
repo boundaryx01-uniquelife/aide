@@ -84,10 +84,13 @@ def send(text: str, *, token: str, chat_id: str, buttons: Optional[Buttons] = No
         _call("sendMessage", token, params)
 
 
-def get_updates(token: str, offset: int = 0, timeout: int = 0) -> list:
-    """Fetch pending button presses. `offset` acknowledges everything below it.
+def get_updates(token: str, offset: int = 0, timeout: int = 0, allowed: Sequence[str] = ("callback_query",)) -> list:
+    """Fetch pending updates. `offset` acknowledges everything below it.
 
-    Only callback_query updates are requested; plain chat messages are never delivered.
+    `allowed` restricts what Telegram delivers at all (default: only button presses).
+    Stage 3b passes ("callback_query", "message") to also receive plain text commands;
+    nothing else (edits, channel posts, group messages the bot wasn't addressed in,
+    etc.) is ever requested.
     """
     result = _call(
         "getUpdates",
@@ -95,7 +98,7 @@ def get_updates(token: str, offset: int = 0, timeout: int = 0) -> list:
         {
             "offset": offset,
             "timeout": timeout,
-            "allowed_updates": json.dumps(["callback_query"]),
+            "allowed_updates": json.dumps(list(allowed)),
         },
         timeout=timeout + 10,
     )

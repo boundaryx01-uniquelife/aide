@@ -3,14 +3,12 @@ from __future__ import annotations
 import logging
 import os
 import secrets
-from dataclasses import replace
 from datetime import datetime, time
 from typing import Callable, List, Optional
-from urllib.parse import quote
 
-from . import gmail, google_auth, inbox, netutil, telegram
+from . import accounts, gmail, google_auth, inbox, netutil, telegram
 from .checks import git_dirty, news_keywords, notice_pages
-from .config import Account, Config
+from .config import Config
 from .models import Finding
 from .state import State, StateLocked, locked
 
@@ -46,23 +44,6 @@ def mail_slot(cfg: Config, now: datetime) -> Optional[str]:
     """State key of today's most recent mail-digest hour that has already started (None before the first)."""
     started = [h for h in cfg.mail_recent_hours if h <= now.hour]
     return f"mailslot:{now.date().isoformat()}:{max(started):02d}" if started else None
-
-
-def _tag_account(found: List[Finding], acct: Account, idx: int, many: bool) -> List[Finding]:
-    """With several accounts: label the title, keep keys unique per account (the first account keeps
-    its old keys, so nothing is re-announced), and point the link at the right mailbox."""
-    if not many:
-        return found
-    out = []
-    for f in found:
-        key = f.key if idx == 0 else f"{f.key}:{acct.name}"
-        url = f.url
-        if url and acct.email:
-            url = url.replace("/mail/u/0/#all/", f"/mail/?authuser={quote(acct.email)}#all/")
-        elif url and idx != 0:
-            url = ""   # /u/0/ would open the wrong mailbox; better no link than a wrong one
-        out.append(replace(f, key=key, title=f"[{acct.name}] {f.title}", url=url))
-    return out
 
 
 def collect(
@@ -109,7 +90,7 @@ def collect(
                 except (netutil.NetError, gmail.MailConfigError) as e:
                     log.warning("최근 메일 요약 건너뜀%s: %s", tag, e)
                     recent_ok = False
-            mail += _tag_account(got, acct, idx, many)
+            mail += accounts.tag_mail(got, acct, idx, many)
         if want_recent and recent_ok and mail_status is not None:
             mail_status["recent_ok"] = True
         seen_keys = set()

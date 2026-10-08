@@ -34,6 +34,8 @@
 | `src/aide/checks/*.py` | 검사들. 모두 결정적 코드, 네트워크/AI 없이 테스트 가능 |
 | `src/aide/telegram.py` | 발신 전용. 일반 텍스트만, 오류에 토큰(URL) 노출 안 함 |
 | `src/aide/heartbeat.py` | 박동 1회 오케스트레이션, 조용한 시간, 요약 구성 |
+| `src/aide/inbox.py` | 수신: 3a 버튼 처리 + 3b 명령 허용 검사·속도 제한. 실행은 `commands.py` 에 위임 |
+| `src/aide/commands.py` | 3b 명령 이름 해석과 명령별 조회(`REGISTRY`). `State` 를 받지 않는 읽기 전용 함수들 |
 
 ## 새 검사 추가하는 법
 `checks/` 에 `check(...) -> list[Finding]` 함수를 만들고 `heartbeat.collect()` 에 한 줄 추가한다.
@@ -45,6 +47,12 @@
 - 3단계 수신: 텔레그램 `getUpdates` 로 버튼/답장 처리. `chat_id` 허용 목록 필수 (SECURITY.md).
 - 4단계 코드 수정 에이전트: 브랜치 + PR 까지만. main 푸시·배포는 사람.
 
-## 수신부 (3a)
-`inbox.py` — `poll_once()` 가 `getUpdates`(callback_query 만)로 버튼 입력을 읽고 `process_updates()` 가 허용 목록 검사 후 `State.resolve_digest()` 로 기록한다.
+## 수신부 (3a / 3b)
+`inbox.py` — `poll_once()` 가 `getUpdates()` 로 업데이트를 읽고 `process_updates()` 가 허용 검사 후 처리한다.
 `state.py` 의 `locked()` 파일 잠금이 heartbeat 와 poll 의 동시 쓰기를 막는다. 네트워크 대기는 잠금 밖에서 한다.
+
+- **3a (버튼)**: `callback_query` 만 요청. `is_allowed()` 로 본인 확인 후 `State.resolve_digest()` 로 기록만 바꾼다.
+- **3b (명령)**: `config.json` 의 `commands` 가 비어 있지 않을 때만 `getUpdates(allowed=(callback_query, message))` 로 글자 메시지도 받는다.
+  `commands.py` 가 누구(`is_command_message`: 본인·개인채팅·텍스트·비전달)·무엇(`resolve`: 고정된 이름만)·얼마나 자주(묶음당 `MAX_PER_BATCH`, 시간당 `State.commands_in_last_hour`) 를 모두 검사한다.
+  잠금 **안**에서는 허용 검사·속도 제한 소비(`State.record_command`)·offset 전진까지만 하고, 실제 명령 실행(`commands.run` → Google/공지 페이지 호출)은 잠금을 **푼 뒤** `poll_once()` 에서 한다 — 느린 네트워크 호출이 heartbeat 의 상태 쓰기를 막지 않도록. 명령 실행 전마다 `touch_watcher()` 로 감시 잠금을 새로 찍어, 느린 응답 중에 다른 poll 이 끼어드는 것을 막는다.
+  명령 함수(`commands.REGISTRY`)는 `(cfg, now) -> str` 뿐이라 `State` 를 아예 받지 않는다 — 버그가 있어도 기록을 바꿀 수 없다.
