@@ -7,7 +7,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 log = logging.getLogger("aide.state")
 
@@ -60,7 +60,7 @@ class State:
 
     Stored as a small JSON file. Writes are atomic (temp file + os.replace) so a
     crash or power loss mid-write cannot corrupt it. Older files without the
-    `digests` / `offset` keys still load.
+    `digests` / `offset` / `cmd_times` keys still load.
     """
 
     def __init__(self, path: Path):
@@ -68,6 +68,7 @@ class State:
         self.seen: Dict[str, str] = {}
         self.digests: Dict[str, dict] = {}
         self.offset: int = 0
+        self.cmd_times: List[float] = []  # stage 3b: timestamps of executed commands, for rate limiting
         self._load()
 
     def _load(self) -> None:
@@ -85,6 +86,7 @@ class State:
                 for k, v in dict(data.get("digests", {})).items()
             }
             self.offset = int(data.get("offset", 0))
+            self.cmd_times = [float(x) for x in data.get("cmd_times", [])]
         except (json.JSONDecodeError, OSError, ValueError, AttributeError, KeyError, TypeError):
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             backup = self.path.with_name(f"{self.path.name}.corrupt-{stamp}")
@@ -93,7 +95,7 @@ class State:
                 log.warning("상태 파일이 손상되어 %s 로 옮기고 새로 시작합니다.", backup.name)
             except OSError:
                 log.warning("상태 파일을 읽을 수 없어 새로 시작합니다.")
-            self.seen, self.digests, self.offset = {}, {}, 0
+            self.seen, self.digests, self.offset, self.cmd_times = {}, {}, 0, []
 
     def is_seen(self, key: str) -> bool:
         return key in self.seen
@@ -126,6 +128,15 @@ class State:
                 self.seen.pop(k, None)
         return action
 
+    def commands_in_last_hour(self, now: datetime, window_seconds: float = 3600.0) -> int:
+        """Stage 3b rate limit: drop timestamps older than the window, return how many remain."""
+        cutoff = now.timestamp() - window_seconds
+        self.cmd_times = [t for t in self.cmd_times if t >= cutoff]
+        return len(self.cmd_times)
+
+    def record_command(self, now: datetime) -> None:
+        self.cmd_times.append(now.timestamp())
+
     def prune(self, now: datetime, days: int = 45) -> int:
         cutoff = now - timedelta(days=days)
 
@@ -147,7 +158,7 @@ class State:
         tmp = self.path.with_name(self.path.name + ".tmp")
         tmp.write_text(
             json.dumps(
-                {"seen": self.seen, "digests": self.digests, "offset": self.offset},
+                {"seen": self.seen, "digests": self.digests, "offset": self.offset, "cmd_times": self.cmd_times},
                 ensure_ascii=False,
                 indent=1,
                 sort_keys=True,

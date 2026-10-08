@@ -9,10 +9,12 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 from typing import Callable, List, Tuple
+from urllib.parse import quote
 
 from . import google_auth, netutil
 from .config import Account, Config
 from .gcal import Event
+from .models import Finding
 
 log = logging.getLogger("aide.accounts")
 
@@ -58,3 +60,20 @@ def failure_lines(failed: List[str], total: int) -> List[str]:
     if len(failed) == total:
         return ["불러오지 못했어요 (로그 확인)."]
     return [f"불러오지 못한 계정: {', '.join(failed)} (로그 확인)"]
+
+
+def tag_mail(found: List[Finding], acct: Account, idx: int, many: bool) -> List[Finding]:
+    """With several accounts: label the title, keep keys unique per account (the first account keeps
+    its old keys, so nothing is re-announced), and point the link at the right mailbox."""
+    if not many:
+        return found
+    out = []
+    for f in found:
+        key = f.key if idx == 0 else f"{f.key}:{acct.name}"
+        url = f.url
+        if url and acct.email:
+            url = url.replace("/mail/u/0/#all/", f"/mail/?authuser={quote(acct.email)}#all/")
+        elif url and idx != 0:
+            url = ""   # /u/0/ would open the wrong mailbox; better no link than a wrong one
+        out.append(replace(f, key=key, title=f"[{acct.name}] {f.title}", url=url))
+    return out

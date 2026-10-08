@@ -5,8 +5,9 @@ import time
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest import mock
 
-from aide import inbox, telegram
+from aide import commands, inbox, telegram
 from aide.config import Config
 from aide.state import State, StateLocked, locked
 
@@ -22,10 +23,11 @@ class FakeApi:
 
     def __init__(self, updates=None, fail=False):
         self.updates, self.fail = updates or [], fail
-        self.answers, self.cleared, self.offsets = [], [], []
+        self.answers, self.cleared, self.offsets, self.sent, self.allowed_seen = [], [], [], [], []
 
-    def get_updates(self, token, offset=0, timeout=0):
+    def get_updates(self, token, offset=0, timeout=0, allowed=("callback_query",)):
         self.offsets.append(offset)
+        self.allowed_seen.append(tuple(allowed))
         return self.updates
 
     def answer_callback(self, token, cid, text):
@@ -35,6 +37,11 @@ class FakeApi:
 
     def clear_buttons(self, token, chat_id, message_id):
         self.cleared.append((chat_id, message_id))
+
+    def send(self, text, *, token, chat_id, buttons=None):
+        if self.fail:
+            raise telegram.TelegramError("down")
+        self.sent.append((chat_id, text))
 
 
 def press(data, uid=1, sender=OWNER, chat=OWNER, is_bot=False, cid="c1"):
@@ -299,6 +306,115 @@ class ButtonTests(unittest.TestCase):
         for _, data in inbox.buttons_for("abcd1234")[0]:
             self.assertLessEqual(len(data.encode()), 64)
             self.assertTrue(inbox.CALLBACK_RE.match(data))
+
+
+def msg(text, uid=1, sender=OWNER, chat=OWNER, chat_type="private", is_bot=False, ts=None, forwarded=False):
+    m = {
+        "message_id": 9,
+        "from": {"id": int(sender), "is_bot": is_bot},
+        "chat": {"id": int(chat), "type": chat_type},
+        "text": text,
+        "date": ts if ts is not None else int(NOW.timestamp()),
+    }
+    if forwarded:
+        m["forward_origin"] = {"type": "user"}
+    return {"update_id": uid, "message": m}
+
+
+class CommandTests(unittest.TestCase):
+    """Stage 3b wiring inside inbox.py. commands.py's own logic (normalize, resolve,
+    renderers) is covered in test_commands.py; this checks who/what/how-often gating
+    and that network-calling handlers run only AFTER the state lock is released."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = Path(self.dir.name) / "state.json"
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def cfg(self, enabled=("오늘",)):
+        return Config(state_path=str(self.path), commands=list(enabled))
+
+    def poll(self, cfg, updates, **kw):
+        api = FakeApi(updates, **kw)
+        n = inbox.poll_once(cfg, token="t", chat_id=OWNER, api=api, now=NOW)
+        return n, api
+
+    def test_disabled_by_default_requests_only_callback_query(self):
+        _, api = self.poll(Config(state_path=str(self.path)), [])
+        self.assertEqual(api.allowed_seen, [("callback_query",)])
+
+    def test_enabled_requests_messages_too(self):
+        _, api = self.poll(self.cfg(), [])
+        self.assertEqual(api.allowed_seen, [("callback_query", "message")])
+
+    def test_owner_command_executes_and_replies_after_lock_released(self):
+        with mock.patch.dict(commands.REGISTRY, {"오늘": lambda cfg, now: "TODAY-REPLY"}):
+            n, api = self.poll(self.cfg(), [msg("/오늘")])
+        self.assertEqual(n, 1)
+        self.assertEqual(api.sent, [(OWNER, "TODAY-REPLY")])
+
+    def test_stranger_message_is_ignored_silently(self):
+        n, api = self.poll(self.cfg(), [msg("/오늘", sender="999", chat="999")])
+        self.assertEqual(n, 0)
+        self.assertEqual(api.sent, [])
+
+    def test_group_chat_from_owner_is_ignored(self):
+        n, api = self.poll(self.cfg(), [msg("/오늘", chat="-100", chat_type="group")])
+        self.assertEqual(n, 0)
+        self.assertEqual(api.sent, [])
+
+    def test_forwarded_message_is_ignored(self):
+        n, api = self.poll(self.cfg(), [msg("/오늘", forwarded=True)])
+        self.assertEqual(n, 0)
+        self.assertEqual(api.sent, [])
+
+    def test_unknown_text_gets_a_reply_but_does_not_execute(self):
+        n, api = self.poll(self.cfg(), [msg("아무말")])
+        self.assertEqual(n, 0)
+        self.assertEqual(api.sent, [(OWNER, "모르는 명령이에요. /도움")])
+
+    def test_command_not_in_enabled_list_is_treated_as_unknown(self):
+        n, api = self.poll(self.cfg(enabled=["일정"]), [msg("/오늘")])
+        self.assertEqual(n, 0)
+        self.assertEqual(api.sent, [(OWNER, "모르는 명령이에요. /도움")])
+
+    def test_stale_command_is_skipped_with_one_notice(self):
+        old_ts = int(NOW.timestamp()) - commands.STALE_SECONDS - 10
+        with mock.patch.dict(commands.REGISTRY, {"오늘": lambda cfg, now: "TODAY-REPLY"}):
+            n, api = self.poll(self.cfg(), [msg("/오늘", ts=old_ts)])
+        self.assertEqual(n, 0)
+        self.assertEqual(api.sent, [(OWNER, "늦게 받은 명령은 건너뛰었어요.")])
+
+    def test_batch_limit_caps_execution_and_notifies_once(self):
+        updates = [msg("/오늘", uid=i) for i in range(1, commands.MAX_PER_BATCH + 3)]
+        with mock.patch.dict(commands.REGISTRY, {"오늘": lambda cfg, now: "R"}):
+            n, api = self.poll(self.cfg(), updates)
+        self.assertEqual(n, commands.MAX_PER_BATCH)
+        self.assertEqual(api.sent.count((OWNER, "R")), commands.MAX_PER_BATCH)
+        self.assertEqual(sum(1 for c, t in api.sent if "많아" in t), 1)
+
+    def test_hour_limit_blocks_once_reached(self):
+        state = State(self.path)
+        for _ in range(commands.MAX_PER_HOUR):
+            state.record_command(NOW)
+        state.save()
+        with mock.patch.dict(commands.REGISTRY, {"오늘": lambda cfg, now: "R"}):
+            n, api = self.poll(self.cfg(), [msg("/오늘")])
+        self.assertEqual(n, 0)
+        self.assertEqual([t for _, t in api.sent], [f"요청이 많아 일부 명령은 건너뛰었어요 (최대 {commands.MAX_PER_HOUR}개/시간)."])
+
+    def test_offset_advances_past_message_updates(self):
+        self.poll(self.cfg(), [msg("/도움", uid=41)])
+        _, api = self.poll(self.cfg(), [])
+        self.assertEqual(api.offsets[-1], 42)
+
+    def test_handler_exception_still_gets_a_reply(self):
+        with mock.patch.dict(commands.REGISTRY, {"오늘": mock.Mock(side_effect=RuntimeError("boom"))}):
+            n, api = self.poll(self.cfg(), [msg("/오늘")])
+        self.assertEqual(n, 1)
+        self.assertIn("오류", api.sent[0][1])
 
 
 if __name__ == "__main__":

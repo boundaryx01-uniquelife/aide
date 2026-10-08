@@ -1,4 +1,4 @@
-# aide 인수인계 (2026-10-08)
+# aide 인수인계 (2026-10-08, 3b 구현 후)
 
 Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 바뀌면 이 파일도 갱신한다.
 
@@ -10,7 +10,7 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - 서버(Ubuntu 24.04, UTC; 주소는 사용자가 알고 있음, 문서에 적지 않음)에서 운영 중. 전용 사용자 aide, /home/aide/aide, main 브랜치.
 - systemd: aide-heartbeat.timer(매시 :07, :37), aide-watch.service(Restart=always). 서버에는 TZ=Asia/Seoul 환경변수 필요(naive datetime 사용).
 - 구글 계정 3개(기본/개인/학교)의 메일·일정 통합 동작, 메시지에 [이름] 표시. config.json 의 google_accounts, 토큰은 data/google_token.json, google_token_personal.json, google_token_school.json (서버: chown aide:aide, chmod 600).
-- 테스트 256개 통과. 비밀값(.env, config.json, 토큰, client json)은 깃 제외.
+- 테스트 309개 통과(3b 추가분 포함). 비밀값(.env, config.json, 토큰, client json)은 깃 제외.
 - 서버 git 명령은 항상 `sudo -u aide git -C /home/aide/aide ...` (root 로 하면 dubious ownership).
 
 ## 주의사항
@@ -34,12 +34,16 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - PC 예약 작업 aide-poll-watch, aide-heartbeat 삭제(서버 이전 완료, 현재 Disabled). 삭제 여부를 사용자에게 확인.
 - 선택 개선: 저녁 마감 창 7일로 확대, 제목 마감일 `(~10/12(월))` 파싱, 예약 시각 :00/:30 이동, 공공데이터(data.go.kr) 연동(ROADMAP F).
 
-## 다음 작업: 3b (텔레그램 읽기 전용 명령)
-- 목표: `/오늘 /일정 /마감 /메일` 명령으로 즉시 조회.
-- 순서: 1) ROADMAP.md, SECURITY.md 읽기 2) 설계안 제안 3) 보안 검토 4) 승인 후 구현·테스트 5) 서버 배포.
-- 보안 필수: 허용된 TELEGRAM_CHAT_ID 만 응답, 읽기 전용(쓰기·전송·삭제 명령 없음), 입력 길이·형식 제한, 로그에 메시지 원문·개인정보 최소화, 실패 시 조용히 거부.
-- 권장 모델: 설계·보안 검토는 Opus + Extended thinking, 구현·테스트는 Sonnet.
+## 3b 구현 완료 (텔레그램 읽기 전용 명령) — `feat/commands` 브랜치, main 미병합
+- 내용: `/오늘 /일정 /마감 /메일 /도움` (영문 별칭 today/week/due/mail/help/start). 기본 꺼짐(`config.json` 의 `commands: []`).
+- 설계·보안 검토는 Opus, 구현·테스트는 Sonnet (사용자 지시). 보안 검토 내용은 SECURITY.md "3b: 읽기 전용 명령" 참고.
+- 새 파일: `src/aide/commands.py` (명령 해석·렌더링, `State` 미사용). `tests/test_commands.py`.
+- 바뀐 파일: `inbox.py`(명령 허용 검사·속도 제한·잠금 분리), `telegram.py`(`get_updates(allowed=...)`), `state.py`(`cmd_times` 속도 제한 기록), `config.py`(`commands` 필드·검증), `accounts.py`(`tag_mail` — heartbeat 의 `_tag_account` 를 옮겨 commands.py 와 공유), `heartbeat.py`(위 이동 반영), `__main__.py`(selfcheck 에 commands 상태 한 줄), `config.example.json`.
+- 문서: README.md("읽기 전용 명령 (3b)"), ARCHITECTURE.md("수신부 3a/3b"), SECURITY.md, docs/ROADMAP.md.
+- **남은 일**: PR 생성 → main 병합 → 서버에 배포(`git pull` 후 `config.json` 에 `commands` 추가, `systemctl restart aide-watch`) → 실제 텔레그램으로 4개 명령 전부 시험.
+- 실사용 전 확인할 것: BotFather 명령 메뉴에 영문 별칭 등록(선택, 수동), 혼자 써보면서 속도 제한(묶음 3개/시간당 20개)이 실사용에 거북하지 않은지.
 
 ## 최근 건드린 파일
+- 3b 명령: 위 섹션 참고.
 - 구글 다중 계정: src/aide/accounts.py, config.py, heartbeat.py, morning.py, evening.py, __main__.py, tests/test_accounts.py
 - 서버 운영: deploy/*, scripts/run_heartbeat.sh, docs/SERVER.md, SECURITY.md

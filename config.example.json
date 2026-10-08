@@ -27,5 +27,6 @@
   "mail_senders": [],
   "mail_recent_hours": [],
   "mail_block": [],
-  "evening_hour": null
+  "evening_hour": null,
+  "commands": []
 }
