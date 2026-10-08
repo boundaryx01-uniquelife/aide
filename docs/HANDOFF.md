@@ -1,4 +1,4 @@
-# aide 인수인계 (2026-10-08, 3b 구현 후)
+# aide 인수인계 (2026-10-09, 3b 서버 배포·실사용 확인 완료)
 
 Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 바뀌면 이 파일도 갱신한다.
 
@@ -34,15 +34,15 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - PC 예약 작업 aide-poll-watch, aide-heartbeat 삭제(서버 이전 완료, 현재 Disabled). 삭제 여부를 사용자에게 확인.
 - 선택 개선: 저녁 마감 창 7일로 확대, 제목 마감일 `(~10/12(월))` 파싱, 예약 시각 :00/:30 이동, 공공데이터(data.go.kr) 연동(ROADMAP F).
 
-## 3b 구현 완료 (텔레그램 읽기 전용 명령) — `feat/commands` 브랜치, main 미병합
+## 3b 완료 (텔레그램 읽기 전용 명령) — main, 서버 배포·실사용 확인까지 끝남
 - 내용: `/오늘 /일정 /마감 /메일 /도움` (영문 별칭 today/week/due/mail/help/start). 기본 꺼짐(`config.json` 의 `commands: []`).
 - 설계·보안 검토는 Opus, 구현·테스트는 Sonnet (사용자 지시). 보안 검토 내용은 SECURITY.md "3b: 읽기 전용 명령" 참고.
 - 새 파일: `src/aide/commands.py` (명령 해석·렌더링, `State` 미사용). `tests/test_commands.py`.
 - 바뀐 파일: `inbox.py`(명령 허용 검사·속도 제한·잠금 분리), `telegram.py`(`get_updates(allowed=...)`), `state.py`(`cmd_times` 속도 제한 기록), `config.py`(`commands` 필드·검증), `accounts.py`(`tag_mail` — heartbeat 의 `_tag_account` 를 옮겨 commands.py 와 공유), `heartbeat.py`(위 이동 반영), `__main__.py`(selfcheck 에 commands 상태 한 줄), `config.example.json`.
 - 문서: README.md("읽기 전용 명령 (3b)"), ARCHITECTURE.md("수신부 3a/3b"), SECURITY.md, docs/ROADMAP.md.
-- PR #1 병합 완료 (2026-10-09, squash, main).
-- **남은 일**: 서버에 배포(`git pull` 후 `config.json` 에 `commands` 추가, `systemctl restart aide-watch`) → 실제 텔레그램으로 4개 명령 전부 시험.
-- 실사용 전 확인할 것: BotFather 명령 메뉴에 영문 별칭 등록(선택, 수동), 혼자 써보면서 속도 제한(묶음 3개/시간당 20개)이 실사용에 거북하지 않은지.
+- PR #1 (구현), PR #2 (HANDOFF 갱신) 병합 완료 (2026-10-09, squash, main).
+- 서버: `config.json` 에 `commands` 추가 후 `aide-watch` 재시작 완료. 텔레그램에서 `/오늘 /일정 /마감 /메일` 실제 응답 확인 완료 (2026-10-09, 사용자 확인).
+- 남음(선택): BotFather 명령 메뉴에 영문 별칭 등록(수동), 속도 제한(묶음 3개/시간당 20개)이 실사용에 거북하면 `commands.py` 의 `MAX_PER_BATCH`/`MAX_PER_HOUR` 조정.
 
 ## 최근 건드린 파일
 - 3b 명령: 위 섹션 참고.
