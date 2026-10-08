@@ -40,7 +40,8 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - 새 파일: `src/aide/commands.py` (명령 해석·렌더링, `State` 미사용). `tests/test_commands.py`.
 - 바뀐 파일: `inbox.py`(명령 허용 검사·속도 제한·잠금 분리), `telegram.py`(`get_updates(allowed=...)`), `state.py`(`cmd_times` 속도 제한 기록), `config.py`(`commands` 필드·검증), `accounts.py`(`tag_mail` — heartbeat 의 `_tag_account` 를 옮겨 commands.py 와 공유), `heartbeat.py`(위 이동 반영), `__main__.py`(selfcheck 에 commands 상태 한 줄), `config.example.json`.
 - 문서: README.md("읽기 전용 명령 (3b)"), ARCHITECTURE.md("수신부 3a/3b"), SECURITY.md, docs/ROADMAP.md.
-- **남은 일**: PR 생성 → main 병합 → 서버에 배포(`git pull` 후 `config.json` 에 `commands` 추가, `systemctl restart aide-watch`) → 실제 텔레그램으로 4개 명령 전부 시험.
+- PR #1 병합 완료 (2026-10-09, squash, main).
+- **남은 일**: 서버에 배포(`git pull` 후 `config.json` 에 `commands` 추가, `systemctl restart aide-watch`) → 실제 텔레그램으로 4개 명령 전부 시험.
 - 실사용 전 확인할 것: BotFather 명령 메뉴에 영문 별칭 등록(선택, 수동), 혼자 써보면서 속도 제한(묶음 3개/시간당 20개)이 실사용에 거북하지 않은지.
 
 ## 최근 건드린 파일
