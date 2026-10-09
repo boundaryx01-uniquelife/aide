@@ -59,5 +59,49 @@ class StateTests(unittest.TestCase):
         self.assertEqual(json.loads(self.path.read_text(encoding="utf-8"))["seen"].keys(), {"k"})
 
 
+class LlmBudgetTests(unittest.TestCase):
+    """Stage 2a: State.llm_calls tracks a per-day call count for the daily budget."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = Path(self.dir.name) / "state.json"
+        self.now = datetime(2026, 10, 9, 9, 0)
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_starts_at_zero_and_counts_up(self):
+        s = State(self.path)
+        self.assertEqual(s.llm_calls_today(self.now), 0)
+        s.record_llm_call(self.now)
+        s.record_llm_call(self.now)
+        self.assertEqual(s.llm_calls_today(self.now), 2)
+
+    def test_persists_across_loads(self):
+        s = State(self.path)
+        s.record_llm_call(self.now)
+        s.save()
+        self.assertEqual(State(self.path).llm_calls_today(self.now), 1)
+
+    def test_different_day_does_not_share_the_count(self):
+        s = State(self.path)
+        s.record_llm_call(self.now)
+        tomorrow = self.now + timedelta(days=1)
+        self.assertEqual(s.llm_calls_today(tomorrow), 0)
+
+    def test_old_days_are_pruned(self):
+        s = State(self.path)
+        s.llm_calls[(self.now - timedelta(days=30)).date().isoformat()] = 5
+        s.llm_calls["garbage"] = 3
+        s.llm_calls_today(self.now)  # triggers pruning as a side effect
+        self.assertEqual(s.llm_calls, {})
+
+    def test_old_state_file_without_llm_calls_loads(self):
+        self.path.write_text('{"seen": {}}', encoding="utf-8")
+        s = State(self.path)
+        self.assertEqual(s.llm_calls, {})
+        self.assertEqual(s.llm_calls_today(self.now), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

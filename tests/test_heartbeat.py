@@ -137,6 +137,137 @@ class DigestTests(unittest.TestCase):
         self.assertNotIn("t15", text)
         self.assertIn("외 5건", text)
 
+    def test_default_priority_is_unaffected_by_llm_sections(self):
+        """Every finding at the default priority (1) -- the common case, feature off
+        or ranking failed -- must render byte-for-byte like before stage 2a."""
+        from aide.models import Finding
+
+        fs = [Finding(key="a", source="mail", title="메일"), Finding(key="b", source="notice", title="공지")]
+        text = heartbeat.format_digest(fs, DAY, 15)
+        self.assertNotIn("중요 (AI 판단)", text)
+        self.assertEqual(text.index("메일") < text.index("공지"), True)
+
+    def test_high_priority_pulled_into_its_own_section_regardless_of_source(self):
+        from aide.models import Finding
+
+        fs = [
+            Finding(key="a", source="mail", title="평범한 메일", priority=1),
+            Finding(key="b", source="notice", title="중요 공지", priority=2),
+        ]
+        text = heartbeat.format_digest(fs, DAY, 15)
+        self.assertLess(text.index("중요 (AI 판단)"), text.index("중요 공지"))
+        self.assertLess(text.index("중요 공지"), text.index("평범한 메일"))
+        self.assertIn("[기관 공지·마감] 중요 공지", text)
+
+    def test_low_priority_sinks_to_the_bottom_of_its_own_section(self):
+        from aide.models import Finding
+
+        fs = [
+            Finding(key="a", source="mail", title="낮음", priority=0),
+            Finding(key="b", source="mail", title="보통", priority=1),
+        ]
+        text = heartbeat.format_digest(fs, DAY, 15)
+        self.assertLess(text.index("보통"), text.index("낮음"))
+
+
+class LlmHeartbeatTests(unittest.TestCase):
+    """Stage 2a wired into heartbeat.run(): off by default, never called on a dry
+    run (cost safety), and its budget/record-keeping only happens under the lock."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.state_path = Path(self.dir.name) / "state.json"
+        self.cfg = Config(news_feeds=["http://x"], news_keywords=["키워드"], state_path=str(self.state_path))
+        self.sent = []
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def ok_sender(self, text, *, token, chat_id, buttons=None):
+        self.sent.append(text)
+
+    @staticmethod
+    def feed(title="키워드 알림", link="http://x/1"):
+        return f"<rss><channel><item><title>{title}</title><link>{link}</link></item></channel></rss>".encode("utf-8")
+
+    def run_hb(self, **kw):
+        kw.setdefault("now", DAY)
+        kw.setdefault("sender", self.ok_sender)
+        kw.setdefault("fetch", lambda url: self.feed())
+        env = dict(ENV, ANTHROPIC_API_KEY=kw.pop("api_key", "key123"))
+        with mock.patch.dict(os.environ, env):
+            return heartbeat.run(self.cfg, **kw)
+
+    def must_not_be_called(self, *a, **k):
+        raise AssertionError("llm.rank must not be called")
+
+    def test_disabled_by_default_never_calls_llm(self):
+        with mock.patch.object(heartbeat.llm, "rank", side_effect=self.must_not_be_called):
+            self.assertEqual(self.run_hb(send=True), 0)
+        self.assertEqual(len(self.sent), 1)
+
+    def test_dry_run_never_calls_llm_even_when_enabled(self):
+        self.cfg.llm_enabled = True
+        buf = io.StringIO()
+        with mock.patch.object(heartbeat.llm, "rank", side_effect=self.must_not_be_called), redirect_stdout(buf):
+            self.assertEqual(self.run_hb(send=False), 0)
+
+    def test_enabled_send_calls_llm_with_api_key_and_applies_priority(self):
+        self.cfg.llm_enabled = True
+        seen_kwargs = {}
+
+        def fake_rank(findings, cfg, *, now, calls_today=0, api_key="", post=None, call_status=None):
+            seen_kwargs["api_key"] = api_key
+            seen_kwargs["calls_today"] = calls_today
+            if call_status is not None:
+                call_status["attempted"] = True
+            return ["high"] + ["normal"] * (len(findings) - 1)
+
+        with mock.patch.object(heartbeat.llm, "rank", side_effect=fake_rank):
+            self.assertEqual(self.run_hb(send=True, api_key="the-key"), 0)
+        self.assertEqual(seen_kwargs["api_key"], "the-key")
+        self.assertEqual(seen_kwargs["calls_today"], 0)
+        self.assertIn("중요 (AI 판단)", self.sent[0])
+        self.assertEqual(State(self.state_path).llm_calls_today(DAY), 1)  # a billed attempt was recorded
+
+    def test_rank_returning_none_leaves_digest_unchanged_but_still_bills_an_attempt(self):
+        self.cfg.llm_enabled = True
+
+        def fake_rank(findings, cfg, *, now, calls_today=0, api_key="", post=None, call_status=None):
+            if call_status is not None:
+                call_status["attempted"] = True  # got a response, just failed local validation
+            return None
+
+        with mock.patch.object(heartbeat.llm, "rank", side_effect=fake_rank):
+            self.assertEqual(self.run_hb(send=True), 0)
+        self.assertNotIn("중요 (AI 판단)", self.sent[0])
+        self.assertEqual(State(self.state_path).llm_calls_today(DAY), 1)
+
+    def test_network_failure_inside_rank_does_not_spend_budget(self):
+        self.cfg.llm_enabled = True
+
+        def fake_rank(findings, cfg, *, now, calls_today=0, api_key="", post=None, call_status=None):
+            return None  # call_status left untouched, same as a NetError inside the real rank()
+
+        with mock.patch.object(heartbeat.llm, "rank", side_effect=fake_rank):
+            self.assertEqual(self.run_hb(send=True), 0)
+        self.assertEqual(State(self.state_path).llm_calls_today(DAY), 0)
+
+    def test_second_run_sees_the_previous_calls_today(self):
+        self.cfg.llm_enabled = True
+        seen = []
+
+        def fake_rank(findings, cfg, *, now, calls_today=0, api_key="", post=None, call_status=None):
+            seen.append(calls_today)
+            if call_status is not None:
+                call_status["attempted"] = True
+            return None
+
+        with mock.patch.object(heartbeat.llm, "rank", side_effect=fake_rank):
+            self.run_hb(send=True, now=DAY)
+            self.run_hb(send=True, now=DAY.replace(hour=13), fetch=lambda url: self.feed("다른 알림", "http://x/2"))
+        self.assertEqual(seen, [0, 1])
+
 
 if __name__ == "__main__":
     unittest.main()

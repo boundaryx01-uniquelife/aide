@@ -75,5 +75,5 @@ def tag_mail(found: List[Finding], acct: Account, idx: int, many: bool) -> List[
             url = url.replace("/mail/u/0/#all/", f"/mail/?authuser={quote(acct.email)}#all/")
         elif url and idx != 0:
             url = ""   # /u/0/ would open the wrong mailbox; better no link than a wrong one
-        out.append(replace(f, key=key, title=f"[{acct.name}] {f.title}", url=url))
+        out.append(replace(f, key=key, title=f"[{acct.name}] {f.title}", url=url, account=acct.name))
     return out

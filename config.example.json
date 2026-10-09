@@ -28,5 +28,11 @@
   "mail_recent_hours": [],
   "mail_block": [],
   "evening_hour": null,
-  "commands": []
+  "commands": [],
+  "llm_enabled": false,
+  "llm_model": "claude-haiku-5-5",
+  "llm_profile": "",
+  "llm_sources": ["mail", "notice", "news"],
+  "llm_exclude_accounts": [],
+  "llm_max_calls_per_day": 30
 }

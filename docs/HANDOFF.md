@@ -1,4 +1,4 @@
-# aide 인수인계 (2026-10-09, 3b 완료 · 2a 설계 확정)
+# aide 인수인계 (2026-10-09, 3b 완료 · 2a 구현 완료, 서버 배포 전)
 
 Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 바뀌면 이 파일도 갱신한다.
 
@@ -10,7 +10,7 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - 서버(Ubuntu 24.04, UTC; 주소는 사용자가 알고 있음, 문서에 적지 않음)에서 운영 중. 전용 사용자 aide, /home/aide/aide, main 브랜치.
 - systemd: aide-heartbeat.timer(매시 :07, :37), aide-watch.service(Restart=always). 서버에는 TZ=Asia/Seoul 환경변수 필요(naive datetime 사용).
 - 구글 계정 3개(기본/개인/학교)의 메일·일정 통합 동작, 메시지에 [이름] 표시. config.json 의 google_accounts, 토큰은 data/google_token.json, google_token_personal.json, google_token_school.json (서버: chown aide:aide, chmod 600).
-- 테스트 309개 통과(3b 추가분 포함). 비밀값(.env, config.json, 토큰, client json)은 깃 제외.
+- 테스트 361개 통과(3b + 2a 추가분 포함). 비밀값(.env, config.json, 토큰, client json, ANTHROPIC_API_KEY)은 깃 제외.
 - 서버 git 명령은 항상 `sudo -u aide git -C /home/aide/aide ...` (root 로 하면 dubious ownership).
 
 ## 주의사항
@@ -44,13 +44,16 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - 서버: `config.json` 에 `commands` 추가 후 `aide-watch` 재시작 완료. 텔레그램에서 `/오늘 /일정 /마감 /메일` 실제 응답 확인 완료 (2026-10-09, 사용자 확인).
 - 남음(선택): BotFather 명령 메뉴에 영문 별칭 등록(수동), 속도 제한(묶음 3개/시간당 20개)이 실사용에 거북하면 `commands.py` 의 `MAX_PER_BATCH`/`MAX_PER_HOUR` 조정.
 
-## 다음 작업: 2a LLM 중요도 판단 — `feat/llm-rank` 브랜치, 설계 확정·구현 전
-- 설계: ARCHITECTURE.md "LLM 판단 (2a)" (흐름·모듈·요청 형식·스키마·설정), 보안: SECURITY.md "LLM 판단 2a".
-- 사용자 결정(2026-10-09): `claude-haiku-5-5`, 표준 라이브러리 HTTP 직접 호출(SDK 안 씀), 학교 계정 제외, 기본 꺼짐.
-- 구현 순서(테스트 먼저): 1) `netutil.post_json` 2) `Finding.account` + `accounts.tag_mail` 3) `state.llm_calls` 4) `llm.py`(rank, 응답 검증) 5) `heartbeat` 정렬·"■ 중요 (AI 판단)" 섹션 6) config 키·검증 7) selfcheck 8) README.
-- 꼭 넣을 테스트: 키 없음/꺼짐→호출 안 함, 응답 형식 오류·번호 누락·중복·이상한 값·`refusal`·`max_tokens`·시간 초과→`None` 이고 digest 는 기존과 동일, 제외 계정·git 은 전송 안 됨, 전송 본문에 URL·키 없음, 하루 상한, 드라이런은 상태 불변, 로그에 본문 없음.
-- 권장 모델: 구현·테스트는 Sonnet.
-- 켜기 전 사용자 확인: Anthropic 데이터 보존·학습 정책, Console 전용 키·지출 한도, 서버 `.env` 에 키 추가(채팅에 붙여넣지 말 것).
+## 2a 구현 완료 (LLM 중요도 판단) — `feat/llm-rank` 브랜치, main 미병합, 서버 배포 전
+- 내용: 메일·공지·뉴스 항목에 high/normal/low 를 매겨 **순서만** 바꿈(숨김·삭제 없음). 기본 꺼짐(`llm_enabled: false`). 사용자 결정(2026-10-09): `claude-haiku-5-5`, 표준 라이브러리 HTTP 직접 호출, 학교 계정 제외.
+- 설계·보안 검토는 Opus, 구현·테스트는 Sonnet(사용자 지시). 설계: ARCHITECTURE.md "LLM 판단 (2a)", 보안: SECURITY.md "LLM 판단 2a".
+- **구현 시 설계에서 바꾼 것**: 드라이런(`heartbeat` 미리보기)이 LLM 을 **부르지 않도록** 보수적으로 수정(원래 설계는 "부르되 상태만 유지"). 돈이 나가는 첫 외부 호출이라 미리보기를 반복 실행해도 비용이 안 들게 함. `--send` 경로에서만 호출.
+- 새 파일: `src/aide/llm.py`(`rank`/`apply_priority`/`labels_by_key`, `State` 미사용). `tests/test_llm.py`.
+- 바뀐 파일: `netutil.py`(`post_json`), `models.py`(`Finding.account`, `priority` 의미를 0/1/2 로 확정), `accounts.py`(`tag_mail` 이 `account` 채움), `state.py`(`llm_calls` 하루 호출 수), `config.py`(`llm_*` 필드·검증), `heartbeat.py`(잠금 밖에서 `llm.rank` → 잠금 안에서 키로 매칭·정렬·호출 기록, `format_digest` 에 "■ 중요 (AI 판단)" 섹션), `__main__.py`(selfcheck 에 llm 상태 한 줄), `config.example.json`, `.env.example`(`ANTHROPIC_API_KEY`).
+- 문서: README.md("LLM 중요도 판단 (2a)"), ARCHITECTURE.md, SECURITY.md.
+- 테스트: 키 없음/꺼짐/드라이런→호출 안 함, 응답 형식 오류·번호 누락·중복·범위 밖·bool-as-int·`refusal`·`max_tokens`→`None`, 제외 계정·git 미전송, 요청 본문에 키·URL 없음, 하루 상한(성공은 기록, 네트워크 실패는 기록 안 함), `format_digest` 의 high/low 섹션, 설정 검증.
+- **남은 일**: PR 생성 → main 병합 → 서버: `.env` 에 `ANTHROPIC_API_KEY` 추가, `config.json` 에 `llm_enabled: true` 등 추가 → `aide-watch` 재시작 → 아침/저녁/점검 알림에서 "■ 중요 (AI 판단)" 섹션 실제 확인.
+- **켜기 전 사용자 확인 필요**(구현과 별개): Anthropic API 의 데이터 보존·학습 사용 정책 약관 확인(설계 시점에 미확인), Console 에서 aide 전용 키 + 월 지출 한도 설정.
 
 ## 최근 건드린 파일
 - 3b 명령: 위 섹션 참고.

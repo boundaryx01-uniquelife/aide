@@ -5,7 +5,7 @@ import logging
 import os
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -60,7 +60,7 @@ class State:
 
     Stored as a small JSON file. Writes are atomic (temp file + os.replace) so a
     crash or power loss mid-write cannot corrupt it. Older files without the
-    `digests` / `offset` / `cmd_times` keys still load.
+    `digests` / `offset` / `cmd_times` / `llm_calls` keys still load.
     """
 
     def __init__(self, path: Path):
@@ -69,6 +69,7 @@ class State:
         self.digests: Dict[str, dict] = {}
         self.offset: int = 0
         self.cmd_times: List[float] = []  # stage 3b: timestamps of executed commands, for rate limiting
+        self.llm_calls: Dict[str, int] = {}  # stage 2a: date (ISO) -> call count, for the daily budget
         self._load()
 
     def _load(self) -> None:
@@ -87,6 +88,7 @@ class State:
             }
             self.offset = int(data.get("offset", 0))
             self.cmd_times = [float(x) for x in data.get("cmd_times", [])]
+            self.llm_calls = {str(k): int(v) for k, v in dict(data.get("llm_calls", {})).items()}
         except (json.JSONDecodeError, OSError, ValueError, AttributeError, KeyError, TypeError):
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             backup = self.path.with_name(f"{self.path.name}.corrupt-{stamp}")
@@ -95,7 +97,7 @@ class State:
                 log.warning("상태 파일이 손상되어 %s 로 옮기고 새로 시작합니다.", backup.name)
             except OSError:
                 log.warning("상태 파일을 읽을 수 없어 새로 시작합니다.")
-            self.seen, self.digests, self.offset, self.cmd_times = {}, {}, 0, []
+            self.seen, self.digests, self.offset, self.cmd_times, self.llm_calls = {}, {}, 0, [], {}
 
     def is_seen(self, key: str) -> bool:
         return key in self.seen
@@ -137,6 +139,24 @@ class State:
     def record_command(self, now: datetime) -> None:
         self.cmd_times.append(now.timestamp())
 
+    def llm_calls_today(self, now: datetime, days: int = 7) -> int:
+        """Stage 2a budget: prune call counts older than `days`, return today's count."""
+        cutoff = now.date() - timedelta(days=days)
+
+        def old(k: str) -> bool:
+            try:
+                return date.fromisoformat(k) < cutoff
+            except ValueError:
+                return True
+
+        for k in [k for k in self.llm_calls if old(k)]:
+            del self.llm_calls[k]
+        return self.llm_calls.get(now.date().isoformat(), 0)
+
+    def record_llm_call(self, now: datetime) -> None:
+        key = now.date().isoformat()
+        self.llm_calls[key] = self.llm_calls.get(key, 0) + 1
+
     def prune(self, now: datetime, days: int = 45) -> int:
         cutoff = now - timedelta(days=days)
 
@@ -158,7 +178,8 @@ class State:
         tmp = self.path.with_name(self.path.name + ".tmp")
         tmp.write_text(
             json.dumps(
-                {"seen": self.seen, "digests": self.digests, "offset": self.offset, "cmd_times": self.cmd_times},
+                {"seen": self.seen, "digests": self.digests, "offset": self.offset,
+                 "cmd_times": self.cmd_times, "llm_calls": self.llm_calls},
                 ensure_ascii=False,
                 indent=1,
                 sort_keys=True,

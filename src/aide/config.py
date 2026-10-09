@@ -68,6 +68,15 @@ class Config:
     # (e.g. ["오늘", "일정", "마감", "메일"]). Empty (default) = feature off, behaviour
     # unchanged from stage 3a (the bot never asks Telegram for plain chat messages at all).
     commands: List[str] = field(default_factory=list)
+    # Stage 2a: LLM importance ranking (high/normal/low) for the notification digest.
+    # Off by default; `llm_enabled: false` (or no ANTHROPIC_API_KEY) means the digest
+    # is built exactly as before. See ARCHITECTURE.md "LLM 판단 (2a)".
+    llm_enabled: bool = False
+    llm_model: str = "claude-haiku-5-5"
+    llm_profile: str = ""   # trusted one-line description the owner writes, e.g. role + what matters
+    llm_sources: List[str] = field(default_factory=lambda: ["mail", "notice", "news"])
+    llm_exclude_accounts: List[str] = field(default_factory=list)   # Google account names never sent to the LLM
+    llm_max_calls_per_day: int = 30
 
     def resolved_state_path(self) -> Path:
         return _resolve(self.state_path)
@@ -132,6 +141,7 @@ def load_config(path: Optional[Path] = None) -> Config:
         raise ConfigError("mail_recent_hours 는 0~23 사이 정수 목록이어야 합니다 (예: [8, 18]).")
     _check_accounts(cfg.google_accounts)
     _check_commands(cfg.commands)
+    _check_llm(cfg)
     return cfg
 
 
@@ -143,6 +153,25 @@ def _check_commands(commands) -> None:
         raise ConfigError(f"commands 에 알 수 없는 명령이 있습니다: {unknown} (허용: {list(COMMAND_NAMES)})")
     if len(set(commands)) != len(commands):
         raise ConfigError("commands 에 같은 명령이 중복되어 있습니다.")
+
+
+# Stage 2a sources: "git" is accepted but excluded from the default (git commit text is
+# not useful for importance ranking and never leaves the machine unless asked for).
+LLM_SOURCES = ("git", "news", "notice", "mail")
+
+
+def _check_llm(cfg: "Config") -> None:
+    if not isinstance(cfg.llm_model, str) or not cfg.llm_model.strip():
+        raise ConfigError("llm_model 은 비어 있지 않은 문자열이어야 합니다.")
+    if not isinstance(cfg.llm_profile, str) or len(cfg.llm_profile) > 500:
+        raise ConfigError("llm_profile 은 500자 이하의 문자열이어야 합니다.")
+    if not isinstance(cfg.llm_sources, list) or any(s not in LLM_SOURCES for s in cfg.llm_sources):
+        raise ConfigError(f"llm_sources 는 {list(LLM_SOURCES)} 중에서만 고를 수 있습니다.")
+    if not isinstance(cfg.llm_exclude_accounts, list) or any(not isinstance(a, str) for a in cfg.llm_exclude_accounts):
+        raise ConfigError("llm_exclude_accounts 는 문자열 목록이어야 합니다.")
+    if (not isinstance(cfg.llm_max_calls_per_day, int) or isinstance(cfg.llm_max_calls_per_day, bool)
+            or cfg.llm_max_calls_per_day < 1):
+        raise ConfigError("llm_max_calls_per_day 는 1 이상의 정수여야 합니다.")
 
 
 def _check_accounts(accounts) -> None:
