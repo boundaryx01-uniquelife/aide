@@ -52,3 +52,11 @@ def get_json(url: str, headers: Optional[Dict[str, str]] = None, timeout: float 
 def post_form(url: str, data: Dict[str, str], timeout: float = 15) -> Any:
     body = urllib.parse.urlencode(data).encode("utf-8")
     return _open(urllib.request.Request(url, data=body, method="POST"), timeout)
+
+
+def post_json(url: str, payload: Any, headers: Optional[Dict[str, str]] = None, timeout: float = 15) -> Any:
+    """POST a JSON body (e.g. the Anthropic Messages API). Same safety properties as
+    `_open`: https only, no redirect, response capped, errors never leak the body."""
+    body = json.dumps(payload).encode("utf-8")
+    hdrs = {"Content-Type": "application/json", **(headers or {})}
+    return _open(urllib.request.Request(url, data=body, headers=hdrs, method="POST"), timeout)

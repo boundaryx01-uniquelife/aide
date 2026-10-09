@@ -6,7 +6,7 @@ import secrets
 from datetime import datetime, time
 from typing import Callable, List, Optional
 
-from . import accounts, gmail, google_auth, inbox, netutil, telegram
+from . import accounts, gmail, google_auth, inbox, llm, netutil, telegram
 from .checks import git_dirty, news_keywords, notice_pages
 from .config import Config
 from .models import Finding
@@ -101,20 +101,40 @@ def collect(
     return findings
 
 
+def _finding_lines(f: Finding, title: Optional[str] = None) -> List[str]:
+    lines = [f"• {title if title is not None else f.title}"]
+    if f.detail:
+        lines.append(f"  {f.detail}")
+    if f.url:
+        lines.append(f"  {f.url}")
+    return lines
+
+
 def format_digest(findings: List[Finding], now: datetime, limit: int) -> str:
+    """`findings` should already be sorted by priority (see `run()`) so that, when
+    there are more than `limit`, the higher-priority ones are the ones kept.
+
+    Stage 2a (LLM, off by default): priority 2 ("high") items get pulled into a
+    dedicated section at the top regardless of source; within each remaining
+    per-source section, priority 0 ("low") items sink to the bottom. When every
+    finding has the default priority (1) -- the feature off, or it failed, or
+    nothing was ranked -- this reduces to exactly the old grouping and order.
+    """
     shown, rest = findings[:limit], max(0, len(findings) - limit)
     lines = [f"[aide] 알림 {len(findings)}건 · {now:%m/%d %H:%M}"]
+    high = [f for f in shown if f.priority >= 2]
+    if high:
+        lines.append("\n■ 중요 (AI 판단)")
+        for f in high:
+            lines += _finding_lines(f, title=f"[{SOURCE_LABELS.get(f.source, f.source)}] {f.title}")
     for source in ("mail", "notice", "git", "news"):
-        group = [f for f in shown if f.source == source]
+        group = [f for f in shown if f.source == source and f.priority < 2]
         if not group:
             continue
+        group = sorted(group, key=lambda f: f.priority < 1)  # stable: low (0) sinks below normal (1)
         lines.append(f"\n■ {SOURCE_LABELS.get(source, source)}")
         for f in group:
-            lines.append(f"• {f.title}")
-            if f.detail:
-                lines.append(f"  {f.detail}")
-            if f.url:
-                lines.append(f"  {f.url}")
+            lines += _finding_lines(f)
     if rest:
         lines.append(f"\n…외 {rest}건 (다음 점검에서 이어서 알림)")
     return "\n".join(lines)
@@ -163,16 +183,40 @@ def run(
     status: dict = {}
     findings = collect(cfg, now, fetch, include_recent=slot_due, mail_status=status)  # slow network work stays outside the lock
     mark_slot = slot_due and bool(status.get("recent_ok"))
+
+    # Stage 2a (off by default): rank a provisional "new" set outside the lock -- the
+    # LLM call is slow network I/O, same reason mail/notice collection happens above
+    # rather than inside `locked()`. Priorities are matched back onto the
+    # authoritative "new" list by Finding.key once the lock is held, so a (very
+    # unlikely) race with a concurrent writer only costs that one item its ranking,
+    # never correctness: it just keeps the default priority.
+    call_status: dict = {}
+    priority_by_key: dict = {}
+    if cfg.llm_enabled:
+        provisional_new = [f for f in findings if _is_new(State(path), f)]
+        calls_today = State(path).llm_calls_today(now)
+        labels = llm.rank(
+            provisional_new, cfg, now=now, calls_today=calls_today,
+            api_key=os.environ.get("ANTHROPIC_API_KEY", ""), call_status=call_status,
+        )
+        priority_by_key = llm.labels_by_key(provisional_new, labels)
+
     try:
         with locked(path):
             state = State(path)  # re-read inside the lock: poll may have written meanwhile
             new = [f for f in findings if _is_new(state, f)]
+            if call_status.get("attempted"):
+                state.record_llm_call(now)  # every billed attempt counts, whether or not there was new mail to rank
             if not new:
                 if mark_slot:
                     state.mark(slot, now)  # this slot's check is done even though nothing new was found
+                if mark_slot or call_status.get("attempted"):
                     state.save()
                 log.info("새로 알릴 것이 없습니다.")
                 return 0
+            if priority_by_key:
+                new = llm.apply_priority(new, priority_by_key)
+            new = sorted(new, key=lambda f: -f.priority)  # stable: high first, low last; a no-op when ranking didn't happen
             batch = new[: cfg.max_items_per_digest]
             digest_id = secrets.token_hex(4)
             digest = format_digest(new, now, cfg.max_items_per_digest)

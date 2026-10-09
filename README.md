@@ -67,6 +67,15 @@ python -m unittest discover -s tests -v
 - 명령은 **읽기 전용**이며 구글 권한도 읽기 전용(`*.readonly`)만 씁니다. 상태 파일을 바꾸는 일도, 다른 곳에 보내는 일도 없습니다.
 - 자세한 위협·대응은 `SECURITY.md` 의 "수신 채널 (3b)".
 
+## LLM 중요도 판단 (2a)
+`config.json` 에 `"llm_enabled": true` 를 넣고 `.env` 에 `ANTHROPIC_API_KEY` 를 넣으면, 30분 점검 때마다 새 메일·공지·뉴스 항목의 중요도(높음/보통/낮음)를 LLM 이 매겨 **순서만** 바꿔 줍니다(기본 꺼짐).
+- 높음은 "■ 중요 (AI 판단)" 섹션으로 맨 위에, 낮음은 각 섹션 맨 아래로. 항목을 숨기거나 더하지 않으며, 표시되는 글자는 항상 원래 데이터입니다.
+- 미리보기(`python -m aide heartbeat`, `--send` 없음)는 **LLM 을 부르지 않습니다** — 돈이 나가는 호출이라 반복 실행해도 비용이 들지 않습니다. 실제 전송(`--send`) 때만 호출합니다.
+- `llm_sources`(기본 메일·공지·뉴스), `llm_exclude_accounts`(예: `["학교"]`), `llm_max_calls_per_day`(기본 30회), `llm_model`(기본 `claude-haiku-5-5`), `llm_profile`(선생님이 적는 참고용 한 줄 설명)로 조절합니다.
+- 메일 제목·발신자, 공지·뉴스 제목이 Anthropic 서버로 전달됩니다. 켜기 전에 Anthropic 의 데이터 보존·학습 정책을 확인하세요.
+- 키가 없거나, 하루 호출 상한을 넘었거나, 응답 형식이 어긋나면 지금과 똑같은 순서로 보냅니다(실패해도 알림 자체는 막히지 않음).
+- 자세한 설계·보안 검토는 `ARCHITECTURE.md` 의 "LLM 판단 (2a)", `SECURITY.md` 의 "LLM 판단 2a".
+
 ## 뉴스 선정 기준
 1. `news_feeds` 의 RSS 에 있는 기사만 후보가 됩니다.
 2. 제목·요약에 `news_keywords` 중 하나가 (대소문자 무시, 부분 일치) 들어 있어야 합니다.

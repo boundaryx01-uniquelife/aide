@@ -249,6 +249,32 @@ class NetutilTests(unittest.TestCase):
             netutil.get_json("http://example.com/x")
         with self.assertRaises(netutil.NetError):
             netutil.post_form("ftp://example.com/x", {})
+        with self.assertRaises(netutil.NetError):
+            netutil.post_json("http://example.com/x", {})
+
+    def test_post_json_sends_json_body_and_headers(self):
+        from unittest import mock
+        opener = mock.Mock()
+        opener.open.return_value = self._resp(b'{"ok": true}')
+        with mock.patch("urllib.request.build_opener", return_value=opener):
+            result = netutil.post_json(
+                "https://x.example/a", {"model": "m", "n": 1}, headers={"x-api-key": "secret"})
+        self.assertEqual(result, {"ok": True})
+        req = opener.open.call_args[0][0]
+        self.assertEqual(json.loads(req.data.decode("utf-8")), {"model": "m", "n": 1})
+        self.assertEqual(req.get_header("X-api-key"), "secret")
+        self.assertEqual(req.get_header("Content-type"), "application/json")
+        self.assertEqual(req.get_method(), "POST")
+
+    @staticmethod
+    def _resp(body, ctype="application/json"):
+        import io
+
+        class R(io.BytesIO):
+            headers = {"Content-Type": ctype}
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        return R(body)
 
 
 if __name__ == "__main__":

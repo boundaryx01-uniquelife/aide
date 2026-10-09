@@ -25,7 +25,12 @@ class Finding:
     title    one-line summary
     detail   optional extra line
     url      optional link
-    priority 1 normal, 2 high (reserved for later stages)
+    priority 0 low, 1 normal (default), 2 high. Display order only -- never affects
+             de-duplication. Set by stage 2a's LLM ranking (llm.py); everything else
+             leaves it at the default, so sorting by priority is a no-op when the
+             feature is off or fails (stable sort preserves the original order).
+    account  which Google account this came from ("" when there is only one, or the
+             finding has no account at all). Used to exclude an account from stage 2a.
     alt_keys extra ids for the SAME item (e.g. a normalized headline). The item counts as
              already seen if ANY of key/alt_keys was reported; reporting marks all of them.
     """
@@ -36,4 +41,5 @@ class Finding:
     detail: str = ""
     url: str = ""
     priority: int = 1
+    account: str = ""
     alt_keys: Tuple[str, ...] = ()
