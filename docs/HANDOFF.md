@@ -1,4 +1,4 @@
-# aide 인수인계 (2026-10-09, 3b 서버 배포·실사용 확인 완료)
+# aide 인수인계 (2026-10-09, 3b 완료 · 2a 설계 확정)
 
 Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 바뀌면 이 파일도 갱신한다.
 
@@ -43,6 +43,14 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - PR #1 (구현), PR #2 (HANDOFF 갱신) 병합 완료 (2026-10-09, squash, main).
 - 서버: `config.json` 에 `commands` 추가 후 `aide-watch` 재시작 완료. 텔레그램에서 `/오늘 /일정 /마감 /메일` 실제 응답 확인 완료 (2026-10-09, 사용자 확인).
 - 남음(선택): BotFather 명령 메뉴에 영문 별칭 등록(수동), 속도 제한(묶음 3개/시간당 20개)이 실사용에 거북하면 `commands.py` 의 `MAX_PER_BATCH`/`MAX_PER_HOUR` 조정.
+
+## 다음 작업: 2a LLM 중요도 판단 — `feat/llm-rank` 브랜치, 설계 확정·구현 전
+- 설계: ARCHITECTURE.md "LLM 판단 (2a)" (흐름·모듈·요청 형식·스키마·설정), 보안: SECURITY.md "LLM 판단 2a".
+- 사용자 결정(2026-10-09): `claude-haiku-5-5`, 표준 라이브러리 HTTP 직접 호출(SDK 안 씀), 학교 계정 제외, 기본 꺼짐.
+- 구현 순서(테스트 먼저): 1) `netutil.post_json` 2) `Finding.account` + `accounts.tag_mail` 3) `state.llm_calls` 4) `llm.py`(rank, 응답 검증) 5) `heartbeat` 정렬·"■ 중요 (AI 판단)" 섹션 6) config 키·검증 7) selfcheck 8) README.
+- 꼭 넣을 테스트: 키 없음/꺼짐→호출 안 함, 응답 형식 오류·번호 누락·중복·이상한 값·`refusal`·`max_tokens`·시간 초과→`None` 이고 digest 는 기존과 동일, 제외 계정·git 은 전송 안 됨, 전송 본문에 URL·키 없음, 하루 상한, 드라이런은 상태 불변, 로그에 본문 없음.
+- 권장 모델: 구현·테스트는 Sonnet.
+- 켜기 전 사용자 확인: Anthropic 데이터 보존·학습 정책, Console 전용 키·지출 한도, 서버 `.env` 에 키 추가(채팅에 붙여넣지 말 것).
 
 ## 최근 건드린 파일
 - 3b 명령: 위 섹션 참고.
