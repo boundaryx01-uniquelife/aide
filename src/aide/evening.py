@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from . import accounts, gcal, llm, netutil, telegram
+from . import accounts, gcal, llm, netutil, rules as rules_mod, telegram
 from .checks import git_dirty, news_keywords, notice_pages, yesterday
 from .config import Config
 from .heartbeat import in_quiet_hours
@@ -124,7 +124,26 @@ def highlight_picks(
     return [f"• {candidates[i][1]} {candidates[i][2]} — {llm.WHY_PHRASES[why]}" for i, why in picks]
 
 
-def _assemble(cfg: Config, now: datetime, events, failed, total, rows, highlight_lines=()) -> str:
+def hidden_lines(cfg: Config, now: datetime) -> List[str]:
+    """Sunday evening (stage L1): what the owner's rules kept out of notifications in the
+    last 7 days, per sender. This is the safety net for a rule that hides too much, so it
+    is not switchable on its own: it appears whenever rules are on and something was hidden."""
+    if not cfg.rules_enabled or not _is_weekly(now):
+        return []
+    counts = State(cfg.resolved_state_path()).hidden_summary(now)
+    if not counts:
+        return []
+    labels = rules_mod.Rules(rules_mod.path_for(cfg.resolved_state_path())).rules
+    out = ["■ 걸러낸 것 (지난 7일)"]
+    for key, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:10]:
+        name = (labels.get(key) or {}).get("label", "")
+        addr = key[len("mail:"):] if key.startswith("mail:") else key
+        out.append(f"• {name} <{addr}>: {n}건" if name else f"• <{addr}>: {n}건")
+    out.append("잘못 걸러졌다면 아래 [규칙 목록]에서 지워 주세요.")
+    return out
+
+
+def _assemble(cfg: Config, now: datetime, events, failed, total, rows, highlight_lines=(), hidden=()) -> str:
     lines = [f"저녁 정리 · {now:%m/%d}({WEEKDAYS[now.weekday()]})", ""]
     if highlight_lines:
         header = "이번 주 핵심" if _is_weekly(now) else "내일의 핵심"
@@ -154,6 +173,8 @@ def _assemble(cfg: Config, now: datetime, events, failed, total, rows, highlight
             pending.append(f"• {Path(repo).name}: 커밋 안 된 변경 {n}개")
     if pending:
         lines += ["", "■ 정리할 것"] + pending
+    if hidden:
+        lines += ["", *hidden]
     return "\n".join(lines).rstrip()
 
 
@@ -162,7 +183,7 @@ def build_message(cfg: Config, now: datetime, *, fetch_events=gcal.today_events,
     """Preview/dry-run path: gathers and assembles in one call, with NO highlight
     section -- stage 2b, like 2a, never runs on a preview (it is a paid call)."""
     events, failed, total, rows = _gather(cfg, now, fetch_events, fetch_week, fetch)
-    return _assemble(cfg, now, events, failed, total, rows)
+    return _assemble(cfg, now, events, failed, total, rows, hidden=hidden_lines(cfg, now))
 
 
 def run(cfg: Config, *, send: bool = False, force: bool = False, now: Optional[datetime] = None,
@@ -208,7 +229,9 @@ def run(cfg: Config, *, send: bool = False, force: bool = False, now: Optional[d
         cfg, now, events, rows, calls_today=State(path).llm_calls_today(now),
         api_key=os.environ.get("ANTHROPIC_API_KEY", ""), call_status=call_status,
     )
-    message = _assemble(cfg, now, events, failed, total, rows, highlight_lines)
+    hidden = hidden_lines(cfg, now)
+    message = _assemble(cfg, now, events, failed, total, rows, highlight_lines, hidden)
+    extra = {"buttons": [[("📋 규칙 목록", "r:list")]]} if hidden else {}
 
     try:
         with locked(path):
@@ -220,7 +243,7 @@ def run(cfg: Config, *, send: bool = False, force: bool = False, now: Optional[d
                     state.save()
                 return 0
             try:
-                sender(message, token=token, chat_id=chat_id)
+                sender(message, token=token, chat_id=chat_id, **extra)
             except telegram.TelegramError as e:
                 log.error("전송 실패: %s (다음 점검에서 재시도)", e)
                 return 1

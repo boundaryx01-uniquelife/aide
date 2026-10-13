@@ -5,6 +5,9 @@ config.json
 # runtime state and logs
 data/state.json
 data/state.json.tmp
+data/rules.json
+data/rules.json.tmp
+data/rules.json.corrupt-*
 data/*.corrupt-*
 data/*.log
 

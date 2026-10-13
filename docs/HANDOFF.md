@@ -1,4 +1,4 @@
-# aide 인수인계 (2026-10-13, 3b·2a 완료 · 2b 구현 완료, 서버 배포 전)
+# aide 인수인계 (2026-10-13, 3b·2a·2b 병합 완료 · 선호 학습 L1 구현 완료, 서버 배포 전)
 
 Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 바뀌면 이 파일도 갱신한다.
 
@@ -53,13 +53,21 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - 서버: `git pull`(최초에 origin/main 추적이 안 돼 `fetch`+`merge --ff-only` 로 해결) → `.env` 에 `ANTHROPIC_API_KEY` 추가 → `config.json` 에 `llm_enabled: true` 등 추가 → `aide-watch` 재시작 → selfcheck 로 `llm: 켜짐 (claude-haiku-5-5)` 확인 → **정상 작동 확인 완료 (2026-10-09, 사용자 확인)**.
 - 남음(선택): `llm_sources`/`llm_exclude_accounts` 실사용 중 조정, 2b(요약) 설계는 2a 를 며칠 돌려 본 뒤.
 
-## 2b 구현 완료 (오늘의 핵심) — `feat/llm-highlights` 브랜치, main 미병합, 서버 배포 전
+## 2b 구현 완료 (오늘의 핵심) — main 병합됨(PR #6), 서버에서 `llm_highlights` 는 아직 안 켬
 - 내용: 아침/저녁(평일은 "내일의 핵심", 일요일은 "이번 주 핵심") 맨 위에 최대 3줄. 닫힌 출력(A안) — 모델은 번호+이유 코드만, 문장은 원본 데이터+고정 문구로 조립. 기본 꺼짐(`llm_highlights: []`).
 - 설계·보안 검토는 Opus, 구현·테스트는 Sonnet(사용자 지시). 설계: ARCHITECTURE.md "LLM 판단 (2b)", 보안: SECURITY.md "LLM 판단 2b". 설계대로 구현됨(2a 와 달리 구현 중 바꾼 것 없음).
 - 새 파일 없음. 바뀐 파일: `gcal.py`(`Event.accounts`), `accounts.py`(`gather_events` 가 account 채움, `event_excluded()`), `llm.py`(공통 `_call_api` 로 `rank`/`pick` 공유, `pick()`+검증+`WHY_PHRASES`), `config.py`(`llm_highlights`+검증), `morning.py`/`evening.py`(조회·LLM 호출·조립을 상태 잠금 **밖**으로 옮기는 재구성 — 2a 이전부터 있던 "메시지 조립이 잠금 안에서 돈다" 문제를 2b 가 고침), `__main__.py`(selfcheck), `config.example.json`, README.
 - 테스트 408개 통과(기존 361 + 신규 47): `llm.pick()` 자체 검증, 계정 제외(두 계정 섞인 경우 포함), morning/evening 통합(꺼짐/드라이런 시 호출 없음, 하루 상한 기록, 평일/일요일 헤더 구분).
 - **남은 일**: PR 생성 → main 병합 → 서버: `config.json` 에 `llm_highlights` 추가(예: `["morning", "evening"]`) → `aide-watch` 재시작 → 아침/저녁 알림에서 핵심 섹션 실제 확인.
 - 남은 확인(사용자, 2a 때부터 이어짐): Anthropic 데이터 보존·학습 정책 — 아직 미확인으로 SECURITY.md 에 남아 있음.
+
+## 선호 학습 L1 구현 완료 (내 규칙) — `feat/prefs-rules` 브랜치, main 미병합, 서버 배포 전
+- 내용: 메일 알림 아래 [🧹 정리] → 발신자 → 알림제외/유지/중요/수신거부. 규칙은 주소 하나 단위, `data/rules.json`(깃 제외). 일요일 저녁 정리에 "걸러낸 것" 요약. `mail_bulk_fold` 로 광고·정기 메일 한 줄 접기. LLM 안 씀. 기본 꺼짐(`rules_enabled`, `mail_bulk_fold`).
+- 설계·보안 검토는 Opus, 구현·테스트는 Sonnet(사용자 지시). 설계: ARCHITECTURE.md "선호 학습 L1", 보안: SECURITY.md "선호 학습 L1". 설계 대비 달라진 점은 ARCHITECTURE.md 끝에 기록(저녁 정리 필수, 확인 후에도 정리 버튼 유지).
+- 새 파일: `src/aide/rules.py`, `src/aide/cleanup.py`, `tests/test_rules.py`. 바뀐 파일: `models.py`(Finding 필드 3개), `gmail.py`(헤더 3개 요청·bulk 감지, 마지막 항목 복사 버그 방지), `state.py`(digest targets·hidden), `telegram.py`(edit_text·set_buttons·URL 버튼), `heartbeat.py`(규칙 적용·접기·섹션·targets), `inbox.py`(m:/r: 버튼), `evening.py`(걸러낸 것), `config.py`·`__main__.py`(설정·`rules` 명령·selfcheck), `.gitignore`, `config.example.json`, README.
+- 테스트 470개 통과(기존 408 + 신규 62).
+- **남은 일**: PR 생성 → main 병합 → 서버: `config.json` 에 `"rules_enabled": true`(필요하면 `"mail_bulk_fold": true`) → `aide-watch` 재시작 → 메일 알림에서 [정리] 버튼 확인. 서버 `data/rules.json` 은 `aide` 소유 600 인지 확인.
+- 다음: L2(같은 발신자 광고·정기 메일이 반복되면 규칙 제안), L3(취향을 LLM 판단에 반영, 뉴스 입맛), L4(수신 거부 대행, 별도 검토). 2b 는 병합됐지만 서버에서 `llm_highlights` 는 아직 안 켬.
 
 ## 최근 건드린 파일
 - 3b 명령: 위 섹션 참고.

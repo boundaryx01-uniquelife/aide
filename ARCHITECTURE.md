@@ -125,3 +125,44 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 - 줄 조립은 `morning.py`/`evening.py` 쪽에서 원본 `Event`/마감 행으로 한다(모델 출력의 글자를 쓰지 않음).
 
 **설정**: `llm_highlights: []` (기본 꺼짐, `["morning", "evening"]` 중 선택. `"evening"` 은 일요일 주간 브리핑 포함). `llm_enabled`·`llm_model`·`llm_exclude_accounts`·`llm_max_calls_per_day`(2a 와 합산)를 그대로 쓴다. `selfcheck` 에 한 줄.
+
+## 선호 학습 L1: 내 규칙과 광고·정기 메일 정리 — 구현 완료 2026-10-13, 서버 배포 전
+"알려 주기"에서 "내 반응을 기억해 다음부터 다르게 하기"로 가는 첫 단계. **LLM 을 쓰지 않는다.** 규칙은 선생님의 버튼에서만 생기고, 발신자 **주소 하나** 단위다. 전체 계획은 L1 규칙 → L2 패턴 보고 규칙 제안 → L3 취향을 LLM 판단에 반영(뉴스 입맛) → L4 수신 거부 대행(별도 검토).
+
+**버튼 흐름** (전부 `callback_query`, 글자 입력 없음)
+```
+알림(digest)  [✅ 확인] [🔕 무시] [⏰ 나중에]
+              [🧹 정리]                                  m:<digest>:open
+   └─ 새 메시지 "어느 발신자를 정리할까요?"
+        [이름 <주소>] ... (최대 8)                        m:<digest>:t<0-7>
+        [📋 규칙 목록] [닫기]                             r:list / m:<digest>:close
+          └─ 메시지 수정 "<이름> <주소> 메일을 어떻게 할까요?"
+               [알림제외] [유지] [중요] [수신거부]        m:<digest>:t<i>:(hide|keep|pin|unsub)
+```
+- **알림제외**(`hide`): 그 주소의 메일을 알림에 넣지 않는다(메일함은 그대로). **유지**(`keep`): 규칙을 두지 않는다(있던 규칙은 지움). **중요**(`pin`): 항상 "■ 중요 (내 규칙)" 섹션에. **수신거부**(`unsub`): aide 는 아무것도 보내지 않고 "Gmail 에서 메일을 열어 수신거부를 누르세요" 안내와 [Gmail 열기](aide 가 만든 mail.google.com 주소) 버튼, 이어서 [알림제외] [유지] 를 다시 보여 준다.
+- 규칙 목록: `r:list` → 최근 규칙 20개와 각 [삭제] 버튼(`r:<규칙키 sha1 앞 8자리>:del`). 일요일 저녁 정리의 "걸러낸 것" 아래에도 [📋 규칙 목록] 버튼을 단다. CLI `python -m aide rules` (목록) / `rules --remove <키>`.
+- 버튼 값은 정규식 하나로 검증: `^m:[0-9a-f]{8}:(open|close|t[0-7](:(hide|keep|pin|unsub))?)$`, `^r:(list|[0-9a-f]{8}:del)$`. 본인 확인은 3a 의 `is_allowed()` 그대로. 모르는 digest·범위 밖 번호·없는 규칙은 "만료된 알림이에요" 로만 답한다. 같은 버튼을 두 번 눌러도 결과가 같다.
+
+**데이터**
+- `models.Finding` 에 `rule_key: str = ""`(메일: `mail:<소문자 주소>`, 형식이 맞을 때만), `label: str = ""`(보낸 사람 표시 이름, `clean` 40자), `bulk: bool = False`.
+- `gmail._headers`: `List-Unsubscribe`·`List-Id`·`Precedence` 헤더를 함께 요청(여전히 `format=metadata`, 본문 없음). 셋 중 하나라도 해당하면 `bulk=True`. **헤더의 값(주소)은 쓰지도 저장하지도 않는다. 있다/없다만.**
+- `data/rules.json`(새 파일, `rules.py`): `{"rules": {"mail:a@b.kr": {"action": "hide"|"pin", "label": ..., "at": ...}}}`. 원자적 저장, 손상되면 격리하고 빈 규칙으로 시작(=아무것도 숨기지 않음), 최대 200개. 쓰기는 버튼 처리(`inbox`)에서 상태 잠금을 잡은 채로만 한다.
+- `state.digests[id]["targets"]`: 그 알림의 발신자 목록 `[{"k": rule_key, "l": label, "u": Gmail 링크}]`(중복 제거, 최대 8). `state.hidden`: `{날짜: {rule_key: 건수}}` 8일 보관.
+
+**적용** (`heartbeat`, 미리보기 포함)
+1. `rules_enabled` 가 꺼져 있으면 아무것도 하지 않는다(규칙 파일이 있어도 적용 안 함 = 되돌림 스위치).
+2. `hide`: 새 항목이면 건수를 세고 본 것으로 표시한 뒤 목록에서 뺀다. LLM 에도 보내지 않는다. 단 `mail_senders`(직접 적은 허용 발신자)에 해당하면 숨기지 않는다.
+3. `pin`: `priority = 3`. LLM 판단 대상에서 빼고 "■ 중요 (내 규칙)" 섹션(AI 판단 섹션보다 위)에 보여 준다.
+4. `mail_bulk_fold` 가 켜져 있으면: 규칙이 없는 `bulk` 메일을 메일 섹션 맨 아래 한 줄로 접는다 — `광고·정기 메일 3건: A, B, C`(이름 최대 5개). 접힌 것도 보낸 것으로 기록하고 [정리] 대상에 포함한다. LLM 에는 보내지 않는다.
+5. 일요일 저녁 정리 끝에 `■ 걸러낸 것 (지난 7일)` 과 발신자별 건수.
+
+**텔레그램**: `telegram.edit_text()`(editMessageText) 추가. 버튼 값이 `https://mail.google.com/` 으로 시작하면 URL 버튼으로 만든다(그 밖의 URL 은 거부).
+
+**설정** (기본 꺼짐): `rules_enabled: false`, `mail_bulk_fold: false`. `.gitignore` 에 `data/rules.json`, `data/rules.json.tmp` 추가(발신자 주소가 들어 있음).
+
+**구현 시 설계에서 달라진 점**
+- 규칙을 쓰려면 `evening_hour` 도 있어야 한다(`load_config` 가 검사). "걸러낸 것" 주간 요약이 안전망인데 저녁 정리가 꺼져 있으면 요약이 어디에도 나오지 않기 때문이다.
+- ✅/🔕/⏰ 를 누르면 키보드 전체를 지우던 것을, 그 알림에 정리 대상이 있으면 **[🧹 정리] 한 개만 남기도록** 바꿨다(`telegram.set_buttons`).
+- 버튼 처리는 `cleanup.py`(정규식·흐름), 규칙 저장은 `rules.py`, 적용(`rules.apply`)과 접기·섹션은 `heartbeat.py` 가 맡는다. 미리보기도 규칙을 적용하지만 상태는 바꾸지 않는다.
+- 접힌 메일만 있고 보여 줄 것이 없으면 알림을 보내지 않고 본 것으로도 표시하지 않는다(다음 알림에 실림).
+

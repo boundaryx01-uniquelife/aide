@@ -4,9 +4,9 @@ import logging
 import os
 import secrets
 from datetime import datetime, time
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Sequence
 
-from . import accounts, gmail, google_auth, inbox, llm, netutil, telegram
+from . import accounts, gmail, google_auth, inbox, llm, netutil, rules, telegram
 from .checks import git_dirty, news_keywords, notice_pages
 from .config import Config
 from .models import Finding
@@ -110,34 +110,79 @@ def _finding_lines(f: Finding, title: Optional[str] = None) -> List[str]:
     return lines
 
 
-def format_digest(findings: List[Finding], now: datetime, limit: int) -> str:
+FOLD_NAMES_SHOWN = 5
+MAX_TARGETS = 8
+
+
+def folded_line(folded: Sequence[Finding]) -> str:
+    """`광고·정기 메일 3건: A, B, C` -- names are the senders' own display names (cleaned)."""
+    names: List[str] = []
+    for f in folded:
+        n = f.label or f.title
+        if n not in names:
+            names.append(n)
+    shown = ", ".join(names[:FOLD_NAMES_SHOWN]) + (" 외" if len(names) > FOLD_NAMES_SHOWN else "")
+    return f"광고·정기 메일 {len(folded)}건: {shown}"
+
+
+def format_digest(findings: List[Finding], now: datetime, limit: int, folded: Sequence[Finding] = ()) -> str:
     """`findings` should already be sorted by priority (see `run()`) so that, when
     there are more than `limit`, the higher-priority ones are the ones kept.
 
-    Stage 2a (LLM, off by default): priority 2 ("high") items get pulled into a
-    dedicated section at the top regardless of source; within each remaining
-    per-source section, priority 0 ("low") items sink to the bottom. When every
-    finding has the default priority (1) -- the feature off, or it failed, or
-    nothing was ranked -- this reduces to exactly the old grouping and order.
+    Sections, top to bottom: priority 3 (the owner's own "중요" rule), priority 2 (stage
+    2a's AI judgment), then one section per source in which priority 0 ("low") sinks to
+    the bottom. `folded` (stage L1, bulk mail with no rule) is one summary line at the
+    end of the mail section. When every finding has the default priority and nothing is
+    folded -- all those features off, or nothing ranked -- this is exactly the old layout.
     """
     shown, rest = findings[:limit], max(0, len(findings) - limit)
     lines = [f"[aide] 알림 {len(findings)}건 · {now:%m/%d %H:%M}"]
-    high = [f for f in shown if f.priority >= 2]
-    if high:
-        lines.append("\n■ 중요 (AI 판단)")
-        for f in high:
-            lines += _finding_lines(f, title=f"[{SOURCE_LABELS.get(f.source, f.source)}] {f.title}")
+    for label, group in (("중요 (내 규칙)", [f for f in shown if f.priority >= 3]),
+                         ("중요 (AI 판단)", [f for f in shown if f.priority == 2])):
+        if group:
+            lines.append(f"\n■ {label}")
+            for f in group:
+                lines += _finding_lines(f, title=f"[{SOURCE_LABELS.get(f.source, f.source)}] {f.title}")
     for source in ("mail", "notice", "git", "news"):
         group = [f for f in shown if f.source == source and f.priority < 2]
-        if not group:
+        extra = bool(folded) and source == "mail"
+        if not group and not extra:
             continue
         group = sorted(group, key=lambda f: f.priority < 1)  # stable: low (0) sinks below normal (1)
         lines.append(f"\n■ {SOURCE_LABELS.get(source, source)}")
         for f in group:
             lines += _finding_lines(f)
+        if extra:
+            lines.append(f"• {folded_line(folded)}")
     if rest:
         lines.append(f"\n…외 {rest}건 (다음 점검에서 이어서 알림)")
     return "\n".join(lines)
+
+
+def targets_for(batch: Sequence[Finding], folded: Sequence[Finding]) -> List[dict]:
+    """Senders the owner may open "정리" on for this digest: shown mail first, then
+    folded mail, one entry per address (max MAX_TARGETS)."""
+    out: List[dict] = []
+    seen = set()
+    for f in [*batch, *folded]:
+        if f.source != "mail" or not f.rule_key or f.rule_key in seen:
+            continue
+        seen.add(f.rule_key)
+        out.append({"k": f.rule_key, "l": f.label or f.title, "u": f.url})
+        if len(out) >= MAX_TARGETS:
+            break
+    return out
+
+
+def load_rules(cfg: Config) -> Optional["rules.Rules"]:
+    return rules.Rules(rules.path_for(cfg.resolved_state_path())) if cfg.rules_enabled else None
+
+
+def split_by_rules(cfg: Config, findings: List[Finding], rule_set):
+    """(shown, hidden, folded) -- everything shown, untouched, when rules are off."""
+    if rule_set is None:
+        return list(findings), [], []
+    return rules.apply(findings, rule_set, allowed_senders=cfg.mail_senders, fold_bulk=cfg.mail_bulk_fold)
 
 
 def run(
@@ -171,10 +216,11 @@ def run(
     if not send:
         state = State(path)
         new = [f for f in collect(cfg, now, fetch, include_recent=True) if _is_new(state, f)]  # preview ignores the slot
-        if not new:
+        shown, _, folded = split_by_rules(cfg, new, load_rules(cfg))
+        if not shown:
             log.info("새로 알릴 것이 없습니다.")  # silence is the normal case
             return 0
-        print(format_digest(new, now, cfg.max_items_per_digest))
+        print(format_digest(sorted(shown, key=lambda f: -f.priority), now, cfg.max_items_per_digest, folded))
         log.info("드라이런: 전송하지 않았고 상태도 바꾸지 않았습니다. (--send 로 실제 전송)")
         return 0
 
@@ -192,9 +238,13 @@ def run(
     # never correctness: it just keeps the default priority.
     call_status: dict = {}
     priority_by_key: dict = {}
+    rule_set = load_rules(cfg)
     if cfg.llm_enabled:
-        provisional_new = [f for f in findings if _is_new(State(path), f)]
-        calls_today = State(path).llm_calls_today(now)
+        seen_state = State(path)
+        provisional = [f for f in findings if _is_new(seen_state, f)]
+        # Mail the owner hid / pinned / folded is never sent to the LLM.
+        provisional_new = [f for f in split_by_rules(cfg, provisional, rule_set)[0] if f.priority < 3]
+        calls_today = seen_state.llm_calls_today(now)
         labels = llm.rank(
             provisional_new, cfg, now=now, calls_today=calls_today,
             api_key=os.environ.get("ANTHROPIC_API_KEY", ""), call_status=call_status,
@@ -204,33 +254,42 @@ def run(
     try:
         with locked(path):
             state = State(path)  # re-read inside the lock: poll may have written meanwhile
-            new = [f for f in findings if _is_new(state, f)]
+            rule_set = load_rules(cfg)  # likewise: the owner may have just pressed a 정리 button
+            new_all = [f for f in findings if _is_new(state, f)]
+            new, hidden, folded = split_by_rules(cfg, new_all, rule_set)
+            for f in hidden:   # left out on purpose: counted and marked seen (saved only on a completed run)
+                for k in _keys(f):
+                    state.mark(k, now)
+                state.add_hidden(f.rule_key, now)
             if call_status.get("attempted"):
                 state.record_llm_call(now)  # every billed attempt counts, whether or not there was new mail to rank
             if not new:
+                # Folded mail alone is not worth a notification: it stays unseen and rides
+                # along with the next digest that has something real in it.
                 if mark_slot:
                     state.mark(slot, now)  # this slot's check is done even though nothing new was found
-                if mark_slot or call_status.get("attempted"):
+                if mark_slot or hidden or call_status.get("attempted"):
                     state.save()
                 log.info("새로 알릴 것이 없습니다.")
                 return 0
             if priority_by_key:
                 new = llm.apply_priority(new, priority_by_key)
-            new = sorted(new, key=lambda f: -f.priority)  # stable: high first, low last; a no-op when ranking didn't happen
+            new = sorted(new, key=lambda f: -f.priority)  # stable: pinned, then high ... low last; a no-op when nothing ranked
             batch = new[: cfg.max_items_per_digest]
+            targets = targets_for(batch, folded) if rule_set is not None else []
             digest_id = secrets.token_hex(4)
-            digest = format_digest(new, now, cfg.max_items_per_digest)
+            digest = format_digest(new, now, cfg.max_items_per_digest, folded)
             try:
-                sender(digest, token=token, chat_id=chat_id, buttons=inbox.buttons_for(digest_id))
+                sender(digest, token=token, chat_id=chat_id, buttons=inbox.buttons_for(digest_id, with_clean=bool(targets)))
             except telegram.TelegramError as e:
                 log.error("전송 실패: %s (다음 점검에서 재시도)", e)
                 return 1
-            all_keys = [k for f in batch for k in _keys(f)]
+            all_keys = [k for f in [*batch, *folded] for k in _keys(f)]
             for k in all_keys:
                 state.mark(k, now)
             if mark_slot and len(new) <= len(batch):
                 state.mark(slot, now)  # leftovers (if any) keep the slot open for the next check
-            state.add_digest(digest_id, all_keys, now)
+            state.add_digest(digest_id, all_keys, now, targets)
             state.prune(now)
             state.save()
             log.info("%d건 전송 완료", len(batch))

@@ -82,6 +82,11 @@ class Config:
     # pick which messages get it: "morning" and/or "evening" (the latter also covers
     # the Sunday weekly brief). See ARCHITECTURE.md "LLM 판단 (2b)".
     llm_highlights: List[str] = field(default_factory=list)
+    # Preference learning L1 (ARCHITECTURE.md "선호 학습 L1"): the owner's own per-sender mail
+    # rules and a "정리" button. Off by default; off also stops every stored rule from applying.
+    rules_enabled: bool = False
+    # With rules on: fold bulk/list mail (headers say so) that has no rule into one line.
+    mail_bulk_fold: bool = False
 
     def resolved_state_path(self) -> Path:
         return _resolve(self.state_path)
@@ -147,6 +152,13 @@ def load_config(path: Optional[Path] = None) -> Config:
     _check_accounts(cfg.google_accounts)
     _check_commands(cfg.commands)
     _check_llm(cfg)
+    if not isinstance(cfg.rules_enabled, bool) or not isinstance(cfg.mail_bulk_fold, bool):
+        raise ConfigError("rules_enabled / mail_bulk_fold 는 true/false 여야 합니다.")
+    if cfg.rules_enabled and cfg.evening_hour is None:
+        # The weekly "걸러낸 것" summary in the evening wrap-up is the only place a rule that hides
+        # too much shows up, and it cannot be switched off on its own -- so rules need it.
+        raise ConfigError("rules_enabled 를 켜려면 evening_hour 도 필요합니다 "
+                          "(일요일 저녁 정리의 '걸러낸 것' 요약이 규칙의 안전망입니다).")
     return cfg
 
 
