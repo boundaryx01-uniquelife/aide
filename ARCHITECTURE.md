@@ -57,7 +57,7 @@
   잠금 **안**에서는 허용 검사·속도 제한 소비(`State.record_command`)·offset 전진까지만 하고, 실제 명령 실행(`commands.run` → Google/공지 페이지 호출)은 잠금을 **푼 뒤** `poll_once()` 에서 한다 — 느린 네트워크 호출이 heartbeat 의 상태 쓰기를 막지 않도록. 명령 실행 전마다 `touch_watcher()` 로 감시 잠금을 새로 찍어, 느린 응답 중에 다른 poll 이 끼어드는 것을 막는다.
   명령 함수(`commands.REGISTRY`)는 `(cfg, now) -> str` 뿐이라 `State` 를 아예 받지 않는다 — 버그가 있어도 기록을 바꿀 수 없다.
 
-## LLM 판단 (2a: 중요도) — 설계 확정 2026-10-09, 구현 전
+## LLM 판단 (2a: 중요도) — 구현·배포 완료 2026-10-09
 알림 묶음의 항목마다 중요도(`high`/`normal`/`low`)만 받아 **순서와 표시만** 바꾼다. 자유 문장은 받지 않는다(2b 요약은 별도 검토).
 
 **흐름** (`heartbeat.run`)
@@ -90,3 +90,38 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 - 시간 초과 20초, 재시도 없음(다음 점검에서 자연히 다시 시도). 로그에는 성공/실패·토큰 수(`usage`)·소요 시간만.
 
 **설정** (모두 기본 꺼짐): `llm_enabled`(false), `llm_model`("claude-haiku-5-5"), `llm_profile`(""), `llm_sources`(["mail","notice","news"]), `llm_exclude_accounts`([]), `llm_max_calls_per_day`(30). `.env`: `ANTHROPIC_API_KEY`. `selfcheck` 는 키 "설정됨/없음"과 llm 켜짐·모델만 보여 준다.
+
+## LLM 판단 (2b: 오늘의 핵심) — 설계 확정 2026-10-13, 구현 전
+아침 인사·저녁 정리 맨 위에 "핵심" 최대 3줄을 붙인다. **닫힌 출력(A안)**: 모델은 항목 번호와 이유 코드만 고르고, 문장은 aide 가 원본 글자 + 고정 문구로 조립한다. 모델이 쓴 글자는 화면에 나오지 않는다(자유 문장 요약인 B안은 채택하지 않음, 필요하면 별도 단계로 다시 검토).
+
+**표시**
+```
+■ 오늘의 핵심 (AI 판단)          ← 저녁: "내일의 핵심", 일요일 저녁: "이번 주 핵심"
+• 14:00 운영위원회 — 준비 필요
+• D-1 발명교육 연수 신청 (~10/14) — 마감 임박
+(빈 줄)
+…이하 지금과 똑같은 본문(날씨·일정·마감)…
+```
+- 원래 목록은 그대로 둔다(핵심은 덧붙이는 것이지 대체가 아님). 고른 것이 없으면 섹션 자체를 생략한다.
+
+**흐름** (`morning.run` / `evening.run`, `--send` 경로만)
+1. 잠금 밖: 오늘 이미 보냈는지·조용한 시간·시각 조건을 미리 확인(보낼 일이 없으면 여기서 끝, LLM 호출 없음).
+2. 잠금 밖: 날씨·일정·마감 조회 → 후보 항목 만들기 → `llm.pick(...)` → 메시지 조립.
+3. 잠금 안: 다시 확인(그 사이 보냈으면 중단) → 전송 → 보냄 표시 → `call_status["attempted"]` 면 `state.record_llm_call(now)` → 저장.
+- **함께 고치는 것**: 지금은 `build_message()`(날씨·일정 네트워크 호출)가 상태 잠금 **안**에서 돈다. 2b 에서 조회·조립을 잠금 밖으로 옮긴다("네트워크 대기는 잠금 밖" 원칙과 일치, 버튼 처리가 막히는 시간 감소). 2b 가 꺼져 있을 때 메시지 내용은 지금과 완전히 같아야 한다.
+- 미리보기(`--send` 없음)는 2a 와 같이 LLM 을 부르지 않는다.
+
+**모듈**
+- `gcal.Event` 에 `accounts: Tuple[str, ...] = ()` 추가, `accounts.gather_events` 가 채운다(제외 계정 판정용. 두 계정에 같은 일정이 있으면 하나라도 제외 계정이면 보내지 않음).
+- `llm.py`
+  - `pick(items, cfg, *, now, scope, context="", calls_today=0, api_key="", post=netutil.post_json, call_status=None) -> Optional[List[Tuple[int, str]]]`
+    - `items`: `[{"kind": "event"|"deadline", "when": ..., "text": ...}, ...]` 를 만들 수 있는 후보 목록(순서 = 번호). `scope`: `"morning"|"evening"|"week"`. `context`: 날씨 한 줄(Open-Meteo, 신뢰된 출처)만.
+    - 호출 조건: `llm_enabled`, `scope` 에 해당하는 값이 `cfg.llm_highlights` 에 있음, 보낼 수 있는 후보 **4개 이상**(3개 이하는 고를 필요가 없음 → `None`), 키 있음, 하루 상한 미만.
+    - 보내는 것: `{"i", "kind", "when", "text": clean(제목, 80)}` 최대 30개. 제외 계정 일정·URL·메일 주소는 보내지 않는다.
+    - 응답 스키마: `{"picks": [{"i": integer, "why": enum}]}`, `additionalProperties: false`. `why` ∈ `deadline|prepare|overlap|weather|important`.
+    - 로컬 검증: `stop_reason == "end_turn"`, `picks` 는 0~3개, `i` 는 정수(불리언 아님)·범위 안·중복 없음, `why` 는 목록 안. 하나라도 어긋나면 `None`. 빈 `picks` 는 유효(= 섹션 생략).
+  - 요청 구성·헤더·시간 초과·`call_status`·로그 규칙은 `rank()` 와 공유한다(공통 부분은 내부 함수로 뽑는다).
+- 이유 코드 → 고정 문구: `deadline` 마감 임박 / `prepare` 준비 필요 / `overlap` 일정 겹침 / `weather` 날씨 주의 / `important` 중요.
+- 줄 조립은 `morning.py`/`evening.py` 쪽에서 원본 `Event`/마감 행으로 한다(모델 출력의 글자를 쓰지 않음).
+
+**설정**: `llm_highlights: []` (기본 꺼짐, `["morning", "evening"]` 중 선택. `"evening"` 은 일요일 주간 브리핑 포함). `llm_enabled`·`llm_model`·`llm_exclude_accounts`·`llm_max_calls_per_day`(2a 와 합산)를 그대로 쓴다. `selfcheck` 에 한 줄.
