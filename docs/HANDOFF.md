@@ -1,4 +1,4 @@
-# aide 인수인계 (2026-10-13, 3b·2a·2b 병합 완료 · 선호 학습 L1 구현 완료, 서버 배포 전)
+# aide 인수인계 (2026-10-13, 3b·2a·2b·L1 병합·배포 · 구글 로그인 프로덕션 게시)
 
 Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 바뀌면 이 파일도 갱신한다.
 
@@ -19,16 +19,20 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - 모델 라우팅: 모델은 직접 바꿀 수 없으므로 상향/하향은 "권장"만 하고 전환은 사용자가 한다.
 - 텔레그램 봇은 프로그램마다 별개. getUpdates 리더는 하나만(watcher 잠금 poll_watch.lock). 둘이면 409 충돌.
 
-## 만료 대비 (구글 로그인, 약 10/11부터)
-- OAuth 앱이 Testing 상태라 갱신 토큰이 약 7일 뒤 만료될 수 있다(로그인 10/04~10/06 → 10/11~10/13).
-- 신호: 서버 로그에 "불러오지 못했어요" 또는 "불러오지 못한 계정: 이름", 아침 인사에 일정 누락.
-- 복구(계정별 반복):
-  1. PC: `cd C:\dev\aide` → `python -m aide google-login --account 이름` (이름: 기본/개인/학교, 브라우저에서 해당 계정 선택)
-  2. PC: `scp data\google_token*.json root@서버IP:/home/aide/aide/data/`
+## 구글 로그인 만료 (2026-10-13 발생 → 프로덕션 게시로 대응)
+- 2026-10-13 14시대부터 기본, 21시부터 개인 계정이 "로그인이 만료되었습니다"로 실패, 그날 저녁 정리의 내일 일정이 비었다. 원인은 OAuth 앱이 "테스트" 상태라 갱신 토큰이 약 7일 뒤 만료되는 것.
+- 대응(사용자 진행): Google Cloud 프로젝트 **My First Project(번호 340195897630)** 의 Google 인증 플랫폼 → 브랜딩(앱 이름·지원 이메일·홈페이지·개인정보처리방침 URL) 채움 → 대상에서 **앱 게시(프로덕션)** → 세 계정 재로그인(10/13 23:12~23:13) → 서버에 복사 → 저녁 정리 미리보기에서 일정 정상 조회 확인(2026-10-13, 사용자 확인).
+  - 홈페이지: `https://github.com/boundaryx01-uniquelife/aide`, 개인정보처리방침: `https://github.com/boundaryx01-uniquelife/aide/blob/main/PRIVACY.md`(저장소 루트 `PRIVACY.md`, PR #8). 이 문서는 aide 가 실제로 읽는 데이터와 전달 경로를 적은 것이므로 기능이 바뀌면(예: 메일 본문을 읽게 되면) 같이 고친다.
+  - 게시 상태가 "프로덕션"으로 바뀐 화면은 직접 확인받지 못했다. **실제 검증은 2026-10-20 무렵**: 그때까지 서버 로그에 "로그인이 만료되었습니다"가 다시 안 나오면 성공.
+- 신호: 서버 로그에 "로그인이 만료되었습니다", 저녁 정리의 "불러오지 못한 계정: 이름", 아침 인사에 일정 누락. (확인: `grep "만료" /home/aide/aide/data/aide.log | tail`)
+- 복구(계정별 반복, 서버 파일은 PC 에서 받은 로그인을 **복사해야** 바뀐다):
+  1. PC: `cd C:\dev\aide` → `python -m aide google-login --account 이름` (이름: 기본/개인/학교, 브라우저에서 해당 계정 선택, "확인되지 않은 앱" 경고는 고급 → 이동)
+  2. PC: `scp C:\dev\aide\data\google_token.json C:\dev\aide\data\google_token_personal.json C:\dev\aide\data\google_token_school.json root@서버IP:/home/aide/aide/data/` (와일드카드 대신 파일 이름을 직접 적는다)
   3. 서버: `chown aide:aide /home/aide/aide/data/google_token*.json` 후 `chmod 600 /home/aide/aide/data/google_token*.json`
-  4. 서버: `systemctl restart aide-watch` 후 `tail -n 30 /home/aide/aide/data/aide.log`
+  4. 서버: `systemctl restart aide-watch` 후 `sudo -u aide bash -c 'cd /home/aide/aide && TZ=Asia/Seoul PYTHONPATH=src python3 -m aide evening'` 로 일정이 나오는지 확인(미리보기, 전송 안 함)
+  - 주의: 조용한 시간(22:30~07:00)에는 점검이 구글을 부르지 않아 로그만으로는 성공 여부를 알 수 없다. 위 미리보기로 확인한다. 서버 파일 시각(`ls -l --time-style=long-iso`)이 방금 복사한 시각인지도 본다.
 - 학교 계정은 관리자 정책으로 막힐 수 있다(막히면 화면 문구 확인).
-- 근본 해결 후보: OAuth 앱 프로덕션 게시(민감 범위라 심사 필요할 수 있음) 또는 만료 예고 알림 추가.
+- 남은 안전망 후보: 로그인이 만료되면 텔레그램으로 먼저 알려 주는 "만료 예고 알림"(아직 안 만듦).
 
 ## 남은 정리
 - PC 예약 작업 aide-poll-watch, aide-heartbeat 삭제(서버 이전 완료, 현재 Disabled). 삭제 여부를 사용자에게 확인.
@@ -61,12 +65,12 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - **남은 일**: PR 생성 → main 병합 → 서버: `config.json` 에 `llm_highlights` 추가(예: `["morning", "evening"]`) → `aide-watch` 재시작 → 아침/저녁 알림에서 핵심 섹션 실제 확인.
 - 남은 확인(사용자, 2a 때부터 이어짐): Anthropic 데이터 보존·학습 정책 — 아직 미확인으로 SECURITY.md 에 남아 있음.
 
-## 선호 학습 L1 구현 완료 (내 규칙) — `feat/prefs-rules` 브랜치, main 미병합, 서버 배포 전
+## 선호 학습 L1 완료 (내 규칙) — main 병합(PR #7), 서버에서 `rules_enabled` 켬, [정리] 버튼 실사용 확인 전
 - 내용: 메일 알림 아래 [🧹 정리] → 발신자 → 알림제외/유지/중요/수신거부. 규칙은 주소 하나 단위, `data/rules.json`(깃 제외). 일요일 저녁 정리에 "걸러낸 것" 요약. `mail_bulk_fold` 로 광고·정기 메일 한 줄 접기. LLM 안 씀. 기본 꺼짐(`rules_enabled`, `mail_bulk_fold`).
 - 설계·보안 검토는 Opus, 구현·테스트는 Sonnet(사용자 지시). 설계: ARCHITECTURE.md "선호 학습 L1", 보안: SECURITY.md "선호 학습 L1". 설계 대비 달라진 점은 ARCHITECTURE.md 끝에 기록(저녁 정리 필수, 확인 후에도 정리 버튼 유지).
 - 새 파일: `src/aide/rules.py`, `src/aide/cleanup.py`, `tests/test_rules.py`. 바뀐 파일: `models.py`(Finding 필드 3개), `gmail.py`(헤더 3개 요청·bulk 감지, 마지막 항목 복사 버그 방지), `state.py`(digest targets·hidden), `telegram.py`(edit_text·set_buttons·URL 버튼), `heartbeat.py`(규칙 적용·접기·섹션·targets), `inbox.py`(m:/r: 버튼), `evening.py`(걸러낸 것), `config.py`·`__main__.py`(설정·`rules` 명령·selfcheck), `.gitignore`, `config.example.json`, README.
 - 테스트 470개 통과(기존 408 + 신규 62).
-- **남은 일**: PR 생성 → main 병합 → 서버: `config.json` 에 `"rules_enabled": true`(필요하면 `"mail_bulk_fold": true`) → `aide-watch` 재시작 → 메일 알림에서 [정리] 버튼 확인. 서버 `data/rules.json` 은 `aide` 소유 600 인지 확인.
+- 서버: 코드 반영·`rules_enabled: true`·재시작 후 selfcheck 로 `rules : 켜짐 / 광고·정기 메일 접기 꺼짐` 확인(2026-10-13, 사용자 확인). **남은 확인**: 메일 알림에 [🧹 정리] 버튼이 뜨고 동작하는지(아직 규칙을 만든 적 없어 `data/rules.json` 없음). `mail_bulk_fold` 는 켜지 않음.
 - 다음: L2(같은 발신자 광고·정기 메일이 반복되면 규칙 제안), L3(취향을 LLM 판단에 반영, 뉴스 입맛), L4(수신 거부 대행, 별도 검토). 2b 는 병합됐지만 서버에서 `llm_highlights` 는 아직 안 켬.
 
 ## 최근 건드린 파일
