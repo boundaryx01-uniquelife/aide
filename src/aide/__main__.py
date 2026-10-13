@@ -72,6 +72,7 @@ def main(argv=None) -> int:
         print(f"commands         : {', '.join(cfg.commands) if cfg.commands else '꺼짐'}")
         print(f"llm              : {'켜짐 (' + cfg.llm_model + ')' if cfg.llm_enabled else '꺼짐'}"
               f" / ANTHROPIC_API_KEY {'설정됨' if os.environ.get('ANTHROPIC_API_KEY') else '없음'}")
+        print(f"llm_highlights   : {', '.join(cfg.llm_highlights) if cfg.llm_highlights else '꺼짐'}")
         accts = cfg.accounts()
         if len(accts) == 1:
             print(f"calendar         : {'켜짐' if cfg.calendar_enabled else '꺼짐'}"

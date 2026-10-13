@@ -9,9 +9,10 @@ from datetime import date, datetime
 from pathlib import Path
 from unittest import mock
 
-from aide import morning, telegram
+from aide import google_auth, morning, telegram
 from aide.checks import yesterday
 from aide.config import Config
+from aide.gcal import Event
 from aide.state import State
 
 TODAY = datetime(2026, 10, 3, 8, 0)   # Saturday, outside quiet hours
@@ -159,6 +160,133 @@ class MorningTests(unittest.TestCase):
         self.assertTrue(st.is_seen("news:abc"))
         self.assertIn("abcd1234", st.digests)
         self.assertEqual(st.offset, 7)
+
+
+class HighlightTests(unittest.TestCase):
+    """Stage 2b wiring: off by default, never called on a dry run (cost safety),
+    and the screen only ever shows the original event's own when/title plus a
+    fixed reason phrase -- never anything the model wrote."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.state_path = Path(self.dir.name) / "state.json"
+        self.cfg = Config(calendar_enabled=True, state_path=str(self.state_path))
+        self.sent = []
+        self.events = [Event(f"{10 + i}:00", f"일정{i}") for i in range(4)]
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def sender(self, text, *, token, chat_id):
+        self.sent.append(text)
+
+    def go(self, **kw):
+        kw.setdefault("now", TODAY)
+        kw.setdefault("sender", self.sender)
+        kw.setdefault("fetch_events", lambda t, n: self.events)
+        token_fn = kw.pop("token_fn", lambda client, path, need_scope=None: "T")
+        env = dict(ENV, ANTHROPIC_API_KEY=kw.pop("api_key", "key123"))
+        with mock.patch.object(google_auth, "access_token", side_effect=token_fn), mock.patch.dict(os.environ, env):
+            return morning.run(self.cfg, **kw)
+
+    def must_not_be_called(self, *a, **k):
+        raise AssertionError("llm.pick must not be called")
+
+    def test_disabled_by_default_never_calls_pick(self):
+        with mock.patch.object(morning.llm, "pick", side_effect=self.must_not_be_called):
+            self.assertEqual(self.go(send=True), 0)
+        self.assertEqual(len(self.sent), 1)
+        self.assertNotIn("핵심", self.sent[0])
+
+    def test_dry_run_never_calls_pick_even_when_enabled(self):
+        self.cfg.llm_enabled = True
+        self.cfg.llm_highlights = ["morning"]
+        buf = io.StringIO()
+        with mock.patch.object(morning.llm, "pick", side_effect=self.must_not_be_called), redirect_stdout(buf):
+            self.assertEqual(self.go(send=False), 0)
+
+    def test_enabled_send_renders_highlight_from_own_data_not_model_text(self):
+        self.cfg.llm_enabled = True
+        self.cfg.llm_highlights = ["morning"]
+        seen_items = {}
+
+        def fake_pick(items, cfg, *, now, scope, context="", calls_today=0, api_key="", post=None, call_status=None):
+            seen_items["items"] = items
+            seen_items["scope"] = scope
+            seen_items["api_key"] = api_key
+            if call_status is not None:
+                call_status["attempted"] = True
+            return [(1, "prepare"), (0, "deadline")]   # model only ever returns index + reason code
+
+        with mock.patch.object(morning.llm, "pick", side_effect=fake_pick):
+            self.assertEqual(self.go(send=True, api_key="the-key"), 0)
+        self.assertEqual(seen_items["scope"], "morning")
+        self.assertEqual(seen_items["api_key"], "the-key")
+        self.assertEqual(len(seen_items["items"]), 4)
+        msg = self.sent[0]
+        self.assertIn("■ 오늘의 핵심 (AI 판단)", msg)
+        self.assertIn("• 11:00 일정1 — 준비 필요", msg)
+        self.assertIn("• 10:00 일정0 — 마감 임박", msg)
+        self.assertEqual(State(self.state_path).llm_calls_today(TODAY), 1)   # billed attempt recorded
+
+    def test_excluded_account_event_not_sent_to_pick(self):
+        """Two real Google accounts; the excluded one's event must never reach
+        llm.pick, even though the non-excluded account's events still do."""
+        self.cfg.llm_enabled = True
+        self.cfg.llm_highlights = ["morning"]
+        self.cfg.llm_exclude_accounts = ["학교"]
+        self.cfg.google_accounts = [
+            {"name": "개인", "token_path": "data/google_token.json"},
+            {"name": "학교", "token_path": "data/google_token_school.json"},
+        ]
+        personal, school = self.events, [Event("09:00", "비공개 일정")]
+
+        def fetch_events(token, now):
+            return school if "school" in token else personal
+
+        def token_fn(client, path, need_scope=None):
+            return str(path)   # distinguishes which account's events come back
+
+        seen = {}
+
+        def fake_pick(items, cfg, **kw):
+            seen["items"] = items
+            return None
+
+        with mock.patch.object(morning.llm, "pick", side_effect=fake_pick):
+            self.go(send=True, fetch_events=fetch_events, token_fn=token_fn)
+        self.assertEqual(len(seen["items"]), len(personal))
+        self.assertNotIn("비공개 일정", [it["text"] for it in seen["items"]])
+
+    def test_pick_returning_none_leaves_message_unchanged_but_still_bills(self):
+        self.cfg.llm_enabled = True
+        self.cfg.llm_highlights = ["morning"]
+
+        def fake_pick(items, cfg, *, call_status=None, **kw):
+            if call_status is not None:
+                call_status["attempted"] = True
+            return None
+
+        with mock.patch.object(morning.llm, "pick", side_effect=fake_pick):
+            self.go(send=True)
+        self.assertNotIn("핵심", self.sent[0])
+        self.assertEqual(State(self.state_path).llm_calls_today(TODAY), 1)
+
+    def test_too_few_events_means_scope_not_relevant_feature_still_off_path(self):
+        """Fewer than 4 events is llm.pick's own job to reject -- morning.py just
+        calls it and trusts whatever comes back, including None."""
+        self.cfg.llm_enabled = True
+        self.cfg.llm_highlights = ["morning"]
+        self.events = self.events[:2]
+        calls = []
+
+        def fake_pick(items, cfg, **kw):
+            calls.append(len(items))
+            return None
+
+        with mock.patch.object(morning.llm, "pick", side_effect=fake_pick):
+            self.go(send=True)
+        self.assertEqual(calls, [2])   # morning.py doesn't pre-filter by count; llm.pick does
 
 
 if __name__ == "__main__":

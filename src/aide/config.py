@@ -77,6 +77,11 @@ class Config:
     llm_sources: List[str] = field(default_factory=lambda: ["mail", "notice", "news"])
     llm_exclude_accounts: List[str] = field(default_factory=list)   # Google account names never sent to the LLM
     llm_max_calls_per_day: int = 30
+    # Stage 2b: an "오늘의 핵심" highlight section (closed-choice: index + reason code
+    # only, never free text) on top of the morning/evening message. Off by default;
+    # pick which messages get it: "morning" and/or "evening" (the latter also covers
+    # the Sunday weekly brief). See ARCHITECTURE.md "LLM 판단 (2b)".
+    llm_highlights: List[str] = field(default_factory=list)
 
     def resolved_state_path(self) -> Path:
         return _resolve(self.state_path)
@@ -158,6 +163,8 @@ def _check_commands(commands) -> None:
 # Stage 2a sources: "git" is accepted but excluded from the default (git commit text is
 # not useful for importance ranking and never leaves the machine unless asked for).
 LLM_SOURCES = ("git", "news", "notice", "mail")
+# Stage 2b: which messages may carry an "오늘의 핵심" section.
+LLM_HIGHLIGHT_SCOPES = ("morning", "evening")
 
 
 def _check_llm(cfg: "Config") -> None:
@@ -172,6 +179,10 @@ def _check_llm(cfg: "Config") -> None:
     if (not isinstance(cfg.llm_max_calls_per_day, int) or isinstance(cfg.llm_max_calls_per_day, bool)
             or cfg.llm_max_calls_per_day < 1):
         raise ConfigError("llm_max_calls_per_day 는 1 이상의 정수여야 합니다.")
+    if not isinstance(cfg.llm_highlights, list) or any(s not in LLM_HIGHLIGHT_SCOPES for s in cfg.llm_highlights):
+        raise ConfigError(f"llm_highlights 는 {list(LLM_HIGHLIGHT_SCOPES)} 중에서만 고를 수 있습니다.")
+    if len(set(cfg.llm_highlights)) != len(cfg.llm_highlights):
+        raise ConfigError("llm_highlights 에 같은 값이 중복되어 있습니다.")
 
 
 def _check_accounts(accounts) -> None:
