@@ -91,7 +91,7 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 
 **설정** (모두 기본 꺼짐): `llm_enabled`(false), `llm_model`("claude-haiku-5-5"), `llm_profile`(""), `llm_sources`(["mail","notice","news"]), `llm_exclude_accounts`([]), `llm_max_calls_per_day`(30). `.env`: `ANTHROPIC_API_KEY`. `selfcheck` 는 키 "설정됨/없음"과 llm 켜짐·모델만 보여 준다.
 
-## LLM 판단 (2b: 오늘의 핵심) — 설계 확정 2026-10-13, 구현 전
+## LLM 판단 (2b: 오늘의 핵심) — 구현 완료 2026-10-13, 서버 배포 전
 아침 인사·저녁 정리 맨 위에 "핵심" 최대 3줄을 붙인다. **닫힌 출력(A안)**: 모델은 항목 번호와 이유 코드만 고르고, 문장은 aide 가 원본 글자 + 고정 문구로 조립한다. 모델이 쓴 글자는 화면에 나오지 않는다(자유 문장 요약인 B안은 채택하지 않음, 필요하면 별도 단계로 다시 검토).
 
 **표시**

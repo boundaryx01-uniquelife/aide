@@ -1,4 +1,4 @@
-# aide 인수인계 (2026-10-13, 3b·2a 완료 · 2b 설계 확정)
+# aide 인수인계 (2026-10-13, 3b·2a 완료 · 2b 구현 완료, 서버 배포 전)
 
 Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 바뀌면 이 파일도 갱신한다.
 
@@ -53,12 +53,13 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - 서버: `git pull`(최초에 origin/main 추적이 안 돼 `fetch`+`merge --ff-only` 로 해결) → `.env` 에 `ANTHROPIC_API_KEY` 추가 → `config.json` 에 `llm_enabled: true` 등 추가 → `aide-watch` 재시작 → selfcheck 로 `llm: 켜짐 (claude-haiku-5-5)` 확인 → **정상 작동 확인 완료 (2026-10-09, 사용자 확인)**.
 - 남음(선택): `llm_sources`/`llm_exclude_accounts` 실사용 중 조정, 2b(요약) 설계는 2a 를 며칠 돌려 본 뒤.
 
-## 다음 작업: 2b 오늘의 핵심 — `feat/llm-highlights` 브랜치, 설계 확정·구현 전
-- 설계: ARCHITECTURE.md "LLM 판단 (2b)", 보안: SECURITY.md "LLM 판단 2b". 사용자 결정(2026-10-13): 닫힌 출력(A안), 아침·저녁·주간 전부, 후보 3개 이하면 생략.
-- 구현 순서(테스트 먼저): 1) `gcal.Event.accounts` + `accounts.gather_events` 2) `llm.py` 공통 부분 뽑기 + `pick()`·검증 3) `morning.run`/`evening.run` 을 "잠금 밖 사전 확인 → 잠금 밖 조회·조립 → 잠금 안 재확인·전송·기록" 으로 재구성 4) 핵심 섹션 조립 5) `llm_highlights` 설정·검증·selfcheck 6) README.
-- 꼭 넣을 테스트: `llm_highlights` 비어 있으면 호출 없음·메시지가 기존과 글자 하나까지 같음, 미리보기는 호출 없음, 후보 3개 이하 호출 없음, 제외 계정 일정 미전송(두 계정 공통 일정 포함), 요청 본문에 URL·키 없음, picks 4개 이상·중복·범위 밖·불리언·모르는 이유 코드·`refusal`·`max_tokens` → 섹션 없음, 빈 picks → 섹션 없음, 화면 글자가 원본과 고정 문구뿐임(모델 응답에 다른 글자를 넣어도 화면에 안 나옴), 호출 기록은 응답을 받은 경우만, 이미 보낸 날·조용한 시간에는 호출 없음, 기존 morning/evening 테스트 전부 통과.
-- 권장 모델: 구현·테스트는 Sonnet.
-- 남은 확인(사용자): Anthropic 데이터 보존·학습 정책(2a 때부터 미확인으로 남아 있음, SECURITY.md).
+## 2b 구현 완료 (오늘의 핵심) — `feat/llm-highlights` 브랜치, main 미병합, 서버 배포 전
+- 내용: 아침/저녁(평일은 "내일의 핵심", 일요일은 "이번 주 핵심") 맨 위에 최대 3줄. 닫힌 출력(A안) — 모델은 번호+이유 코드만, 문장은 원본 데이터+고정 문구로 조립. 기본 꺼짐(`llm_highlights: []`).
+- 설계·보안 검토는 Opus, 구현·테스트는 Sonnet(사용자 지시). 설계: ARCHITECTURE.md "LLM 판단 (2b)", 보안: SECURITY.md "LLM 판단 2b". 설계대로 구현됨(2a 와 달리 구현 중 바꾼 것 없음).
+- 새 파일 없음. 바뀐 파일: `gcal.py`(`Event.accounts`), `accounts.py`(`gather_events` 가 account 채움, `event_excluded()`), `llm.py`(공통 `_call_api` 로 `rank`/`pick` 공유, `pick()`+검증+`WHY_PHRASES`), `config.py`(`llm_highlights`+검증), `morning.py`/`evening.py`(조회·LLM 호출·조립을 상태 잠금 **밖**으로 옮기는 재구성 — 2a 이전부터 있던 "메시지 조립이 잠금 안에서 돈다" 문제를 2b 가 고침), `__main__.py`(selfcheck), `config.example.json`, README.
+- 테스트 408개 통과(기존 361 + 신규 47): `llm.pick()` 자체 검증, 계정 제외(두 계정 섞인 경우 포함), morning/evening 통합(꺼짐/드라이런 시 호출 없음, 하루 상한 기록, 평일/일요일 헤더 구분).
+- **남은 일**: PR 생성 → main 병합 → 서버: `config.json` 에 `llm_highlights` 추가(예: `["morning", "evening"]`) → `aide-watch` 재시작 → 아침/저녁 알림에서 핵심 섹션 실제 확인.
+- 남은 확인(사용자, 2a 때부터 이어짐): Anthropic 데이터 보존·학습 정책 — 아직 미확인으로 SECURITY.md 에 남아 있음.
 
 ## 최근 건드린 파일
 - 3b 명령: 위 섹션 참고.

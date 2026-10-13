@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 from urllib.parse import urlencode
 
 from . import netutil
@@ -19,6 +19,7 @@ class Event:
     when: str   # "09:30" or "종일"
     title: str
     day: Optional[date] = None   # KST calendar day it starts on (None only for hand-made events)
+    accounts: Tuple[str, ...] = ()   # which Google account(s) this came from; filled by accounts.gather_events
 
 
 def day_bounds(now: datetime):

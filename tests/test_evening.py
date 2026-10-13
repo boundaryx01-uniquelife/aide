@@ -4,7 +4,7 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -287,6 +287,157 @@ class ConfigAndCliTests(unittest.TestCase):
         bat = (Path(__file__).resolve().parents[1] / "scripts" / "run_heartbeat.bat").read_text(encoding="utf-8")
         self.assertIn("python -m aide evening --send", bat)
         bat.encode("ascii")  # cmd must be able to read it
+
+
+class HighlightTests(unittest.TestCase):
+    """Stage 2b wiring: off by default, never called on a dry run (cost safety),
+    and the screen only ever shows the original event's/deadline's own when/text
+    plus a fixed reason phrase -- never anything the model wrote."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.state_path = Path(self.dir.name) / "state.json"
+        self.cfg = Config(calendar_enabled=True, evening_hour=20, state_path=str(self.state_path))
+        self.sent = []
+        self.events = [gcal.Event(f"{10 + i}:00", f"일정{i}", SAT.date()) for i in range(4)]
+        self.p = [mock.patch.object(yesterday, "commits_on", lambda r, d: []),
+                  mock.patch.object(git_dirty, "count_changes", lambda r: None)]
+        for p in self.p:
+            p.start()
+
+    def tearDown(self):
+        for p in self.p:
+            p.stop()
+        self.dir.cleanup()
+
+    def sender(self, text, **k):
+        self.sent.append(text)
+
+    def go(self, **kw):
+        kw.setdefault("now", SAT)
+        kw.setdefault("sender", self.sender)
+        kw.setdefault("fetch", fetch)
+        kw.setdefault("fetch_events", lambda t, n: self.events)
+        token_fn = kw.pop("token_fn", lambda client, path, need_scope=None: "T")
+        env = dict(ENV, ANTHROPIC_API_KEY=kw.pop("api_key", "key123"))
+        with mock.patch.object(ga, "access_token", side_effect=token_fn), mock.patch.dict("os.environ", env):
+            return evening.run(self.cfg, send=True, **kw)
+
+    def must_not_be_called(self, *a, **k):
+        raise AssertionError("llm.pick must not be called")
+
+    def test_disabled_by_default_never_calls_pick(self):
+        with mock.patch.object(evening.llm, "pick", side_effect=self.must_not_be_called):
+            self.assertEqual(self.go(), 0)
+        self.assertEqual(len(self.sent), 1)
+        self.assertNotIn("핵심", self.sent[0])
+
+    def test_dry_run_never_calls_pick_even_when_enabled(self):
+        self.cfg.llm_enabled = True
+        self.cfg.llm_highlights = ["evening"]
+        buf = io.StringIO()
+        with mock.patch.object(evening.llm, "pick", side_effect=self.must_not_be_called), redirect_stdout(buf), \
+                mock.patch.object(ga, "access_token", return_value="T"):
+            self.assertEqual(evening.run(self.cfg, send=False, now=SAT, fetch=fetch,
+                                         fetch_events=lambda t, n: self.events), 0)
+
+    def test_daily_evening_header_is_tomorrows_highlight(self):
+        self.cfg.llm_enabled = True
+        self.cfg.llm_highlights = ["evening"]
+
+        def fake_pick(items, cfg, *, call_status=None, **kw):
+            if call_status is not None:
+                call_status["attempted"] = True
+            return [(0, "overlap")]
+
+        with mock.patch.object(evening.llm, "pick", side_effect=fake_pick):
+            self.go()
+        self.assertIn("■ 내일의 핵심 (AI 판단)", self.sent[0])
+        self.assertIn("• 10:00 일정0 — 일정 겹침", self.sent[0])
+        self.assertEqual(State(self.state_path).llm_calls_today(SAT), 1)
+
+    def test_sunday_header_is_weekly_and_scope_is_still_evening(self):
+        """Sunday evening briefs the whole coming week; the highlight header changes
+        ("이번 주 핵심") but llm.pick's `scope` stays "evening" (that's what
+        `llm_highlights` gates, regardless of daily vs. weekly)."""
+        self.cfg.llm_enabled = True
+        self.cfg.llm_highlights = ["evening"]
+        monday = NOW.date() + timedelta(days=1)
+        week_events = [gcal.Event("09:00", "월요 회의", monday)]
+        seen = {}
+
+        def fake_pick(items, cfg, *, scope, **kw):
+            seen["scope"] = scope
+            return [(0, "important")]
+
+        with mock.patch.object(evening.llm, "pick", side_effect=fake_pick), \
+                mock.patch.object(ga, "access_token", return_value="T"):
+            self.assertEqual(
+                evening.run(self.cfg, send=True, now=NOW, sender=self.sender, fetch=fetch,
+                            fetch_week=lambda t, f, d: week_events),
+                0,
+            )
+        self.assertEqual(seen["scope"], "evening")
+        self.assertIn("■ 이번 주 핵심 (AI 판단)", self.sent[-1])
+        self.assertIn("• 10/05(월) 09:00 월요 회의 — 중요", self.sent[-1])
+
+    def test_deadline_candidate_can_be_picked(self):
+        self.cfg.llm_enabled = True
+        self.cfg.llm_highlights = ["evening"]
+        self.cfg.notice_pages = [PAGE]
+        self.cfg.calendar_enabled = False
+        seen = {}
+
+        def fake_pick(items, cfg, **kw):
+            seen["items"] = items
+            return [(0, "deadline")]
+
+        with mock.patch.object(evening.llm, "pick", side_effect=fake_pick):
+            self.go()
+        self.assertEqual(seen["items"][0]["kind"], "deadline")
+        self.assertIn("■ 내일의 핵심 (AI 판단)", self.sent[0])
+        self.assertIn("마감 임박", self.sent[0])
+
+    def test_excluded_account_event_not_sent_to_pick(self):
+        self.cfg.llm_enabled = True
+        self.cfg.llm_highlights = ["evening"]
+        self.cfg.llm_exclude_accounts = ["학교"]
+        self.cfg.google_accounts = [
+            {"name": "개인", "token_path": "data/google_token.json"},
+            {"name": "학교", "token_path": "data/google_token_school.json"},
+        ]
+        personal, school = self.events, [gcal.Event("09:00", "비공개 일정", SAT.date())]
+
+        def fetch_events(token, now):
+            return school if "school" in token else personal
+
+        def token_fn(client, path, need_scope=None):
+            return str(path)
+
+        seen = {}
+
+        def fake_pick(items, cfg, **kw):
+            seen["items"] = items
+            return None
+
+        with mock.patch.object(evening.llm, "pick", side_effect=fake_pick):
+            self.go(fetch_events=fetch_events, token_fn=token_fn)
+        self.assertEqual(len(seen["items"]), len(personal))
+        self.assertNotIn("비공개 일정", [it["text"] for it in seen["items"]])
+
+    def test_pick_returning_none_leaves_message_unchanged_but_still_bills(self):
+        self.cfg.llm_enabled = True
+        self.cfg.llm_highlights = ["evening"]
+
+        def fake_pick(items, cfg, *, call_status=None, **kw):
+            if call_status is not None:
+                call_status["attempted"] = True
+            return None
+
+        with mock.patch.object(evening.llm, "pick", side_effect=fake_pick):
+            self.go()
+        self.assertNotIn("핵심", self.sent[0])
+        self.assertEqual(State(self.state_path).llm_calls_today(SAT), 1)
 
 
 if __name__ == "__main__":

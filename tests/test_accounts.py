@@ -130,6 +130,47 @@ class GatherEventsTests(unittest.TestCase):
         self.assertEqual(accounts.failure_lines(["개인", "학교"], 2), ["불러오지 못했어요 (로그 확인)."])
         self.assertEqual(accounts.failure_lines([""], 1), ["불러오지 못했어요 (로그 확인)."])
 
+    def test_accounts_field_set_for_single_account(self):
+        """Stage 2b: even unlabelled (single-account), .accounts is filled in so
+        event_excluded() has something to check."""
+        out, _, _ = self.run_gather(Config(), {"google_token.json": [Event("09:00", "회의", D)]})
+        self.assertEqual(out[0].accounts, ("",))
+
+    def test_accounts_field_set_per_account(self):
+        out, _, _ = self.run_gather(cfg2(), {
+            "google_token.json": [Event("14:00", "수업", D)],
+            "google_token_school.json": [Event("09:00", "회의", D)],
+        })
+        by_title = {e.title: e.accounts for e in out}
+        self.assertEqual(by_title["[학교] 회의"], ("학교",))
+        self.assertEqual(by_title["[개인] 수업"], ("개인",))
+
+    def test_merged_event_carries_both_account_names(self):
+        ev = lambda: [Event("09:00", "회의", D)]
+        out, _, _ = self.run_gather(cfg2(), {"google_token.json": ev(), "google_token_school.json": ev()})
+        self.assertEqual(out[0].accounts, ("개인", "학교"))
+
+
+class EventExcludedTests(unittest.TestCase):
+    def test_single_account_not_excluded_by_default(self):
+        e = Event("09:00", "회의", D, accounts=("",))
+        self.assertFalse(accounts.event_excluded(e, []))
+
+    def test_excluded_when_account_matches(self):
+        e = Event("09:00", "회의", D, accounts=("학교",))
+        self.assertTrue(accounts.event_excluded(e, ["학교"]))
+        self.assertFalse(accounts.event_excluded(e, ["개인"]))
+
+    def test_merged_event_excluded_if_any_account_is_excluded(self):
+        """A merged event (seen in two accounts) still counts as the excluded
+        account's event -- err on the side of leaving it out."""
+        e = Event("09:00", "회의", D, accounts=("개인", "학교"))
+        self.assertTrue(accounts.event_excluded(e, ["학교"]))
+
+    def test_no_accounts_field_is_not_excluded(self):
+        e = Event("09:00", "회의", D)  # accounts defaults to ()
+        self.assertFalse(accounts.event_excluded(e, ["학교"]))
+
 
 class HeartbeatMailTests(unittest.TestCase):
     def mail(self, token, senders, n):

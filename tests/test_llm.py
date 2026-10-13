@@ -226,6 +226,160 @@ class ApplyPriorityTests(unittest.TestCase):
         self.assertEqual(llm.apply_priority(findings, {}), findings)
 
 
+def item(kind="event", when="14:00", text="제목"):
+    return {"kind": kind, "when": when, "text": text}
+
+
+def ok_pick_response(picks):
+    """A valid Anthropic response body for the given [(i, why), ...] pairs."""
+    text = json.dumps({"picks": [{"i": i, "why": why} for i, why in picks]})
+    return {"stop_reason": "end_turn", "content": [{"type": "text", "text": text}],
+            "usage": {"input_tokens": 10, "output_tokens": 5}}
+
+
+class BuildPickRequestTests(unittest.TestCase):
+    def test_shape_and_schema_and_context(self):
+        items = [item(text="운영위원회")]
+        cfg = Config(llm_model="claude-haiku-5-5", llm_profile="발명교육센터 교사")
+        body = llm._build_pick_request(items, cfg, "맑음, 12~20°C")
+        self.assertEqual(body["model"], "claude-haiku-5-5")
+        self.assertEqual(body["output_config"]["format"]["schema"], llm.PICK_SCHEMA)
+        self.assertIn("발명교육센터 교사", body["system"])
+        content = body["messages"][0]["content"]
+        self.assertIn("맑음, 12~20°C", content)
+        array_text = content.split("참고 날씨")[0]
+        payload = json.loads(array_text[array_text.index("["):])
+        self.assertEqual(payload, [{"i": 0, "kind": "event", "when": "14:00", "text": "운영위원회"}])
+
+    def test_no_context_omits_weather_section(self):
+        body = llm._build_pick_request([item()], Config(), "")
+        self.assertNotIn("참고 날씨", body["messages"][0]["content"])
+
+    def test_long_text_is_cleaned_and_capped(self):
+        body = llm._build_pick_request([item(text="x" * 300)], Config(), "")
+        content = body["messages"][0]["content"]
+        payload = json.loads(content[content.index("["):])
+        self.assertLessEqual(len(payload[0]["text"]), 80)
+
+
+class ParsePickResponseTests(unittest.TestCase):
+    def test_valid_response(self):
+        data = ok_pick_response([(0, "deadline"), (1, "prepare")])
+        self.assertEqual(llm._parse_pick_response(data, 3), [(0, "deadline"), (1, "prepare")])
+
+    def test_empty_picks_is_valid(self):
+        self.assertEqual(llm._parse_pick_response(ok_pick_response([]), 3), [])
+
+    def test_more_than_max_picks_rejected(self):
+        self.assertIsNone(llm._parse_pick_response(ok_pick_response([(0, "deadline")] * 4), 5))
+
+    def test_duplicate_index_rejected(self):
+        self.assertIsNone(llm._parse_pick_response(ok_pick_response([(0, "deadline"), (0, "prepare")]), 2))
+
+    def test_out_of_range_index_rejected(self):
+        self.assertIsNone(llm._parse_pick_response(ok_pick_response([(5, "deadline")]), 2))
+
+    def test_bool_as_index_rejected(self):
+        data = ok_pick_response([(0, "deadline")])
+        data["content"][0]["text"] = json.dumps({"picks": [{"i": True, "why": "deadline"}]})
+        self.assertIsNone(llm._parse_pick_response(data, 2))
+
+    def test_unknown_reason_code_rejected(self):
+        self.assertIsNone(llm._parse_pick_response(ok_pick_response([(0, "urgent")]), 2))
+
+    def test_wrong_stop_reason_rejected(self):
+        data = ok_pick_response([(0, "deadline")])
+        data["stop_reason"] = "max_tokens"
+        self.assertIsNone(llm._parse_pick_response(data, 2))
+
+    def test_garbage_shapes_never_raise(self):
+        for bad in [None, "x", 3, {}, {"content": None}]:
+            self.assertIsNone(llm._parse_pick_response(bad, 2))
+
+
+class PickTests(unittest.TestCase):
+    def cfg(self, **kw):
+        kw.setdefault("llm_highlights", ["morning"])
+        return Config(llm_enabled=True, **kw)
+
+    def items(self, n):
+        return [item(when=f"{i}:00", text=f"항목{i}") for i in range(n)]
+
+    def test_disabled_returns_none_without_calling_post(self):
+        def boom(*a, **k):
+            raise AssertionError("must not call the network")
+        out = llm.pick(self.items(5), Config(llm_enabled=False), now=NOW, scope="morning", api_key="k", post=boom)
+        self.assertIsNone(out)
+
+    def test_scope_not_enabled_returns_none_without_calling_post(self):
+        def boom(*a, **k):
+            raise AssertionError("must not call the network")
+        out = llm.pick(self.items(5), self.cfg(llm_highlights=["evening"]), now=NOW, scope="morning",
+                        api_key="k", post=boom)
+        self.assertIsNone(out)
+
+    def test_too_few_candidates_returns_none_without_calling_post(self):
+        def boom(*a, **k):
+            raise AssertionError("must not call the network")
+        for n in range(llm.MIN_PICK_ITEMS):
+            out = llm.pick(self.items(n), self.cfg(), now=NOW, scope="morning", api_key="k", post=boom)
+            self.assertIsNone(out, f"n={n}")
+
+    def test_no_api_key_returns_none_without_calling_post(self):
+        def boom(*a, **k):
+            raise AssertionError("must not call the network")
+        out = llm.pick(self.items(5), self.cfg(), now=NOW, scope="morning", api_key="", post=boom)
+        self.assertIsNone(out)
+
+    def test_over_daily_budget_returns_none_without_calling_post(self):
+        def boom(*a, **k):
+            raise AssertionError("must not call the network")
+        cfg = self.cfg(llm_max_calls_per_day=3)
+        out = llm.pick(self.items(5), cfg, now=NOW, scope="morning", calls_today=3, api_key="k", post=boom)
+        self.assertIsNone(out)
+
+    def test_successful_call_returns_picks(self):
+        def fake_post(url, payload, headers=None, timeout=None):
+            return ok_pick_response([(1, "deadline")])
+        out = llm.pick(self.items(5), self.cfg(), now=NOW, scope="morning", api_key="k", post=fake_post)
+        self.assertEqual(out, [(1, "deadline")])
+
+    def test_items_truncated_to_max(self):
+        seen_counts = []
+
+        def fake_post(url, payload, headers=None, timeout=None):
+            content = payload["messages"][0]["content"]
+            payload_items = json.loads(content[content.index("["):])
+            seen_counts.append(len(payload_items))
+            return ok_pick_response([])
+
+        llm.pick(self.items(llm.MAX_ITEMS + 10), self.cfg(), now=NOW, scope="morning", api_key="k", post=fake_post)
+        self.assertEqual(seen_counts, [llm.MAX_ITEMS])
+
+    def test_network_error_returns_none_and_does_not_set_call_status(self):
+        def fail(*a, **k):
+            raise netutil.NetError("연결 실패")
+        status = {}
+        out = llm.pick(self.items(5), self.cfg(), now=NOW, scope="morning", api_key="k", post=fail,
+                        call_status=status)
+        self.assertIsNone(out)
+        self.assertNotIn("attempted", status)
+
+    def test_successful_call_sets_call_status_even_on_validation_failure(self):
+        status = {}
+        out = llm.pick(self.items(5), self.cfg(), now=NOW, scope="morning", api_key="k",
+                        post=lambda *a, **k: {"stop_reason": "max_tokens"}, call_status=status)
+        self.assertIsNone(out)
+        self.assertTrue(status.get("attempted"))
+
+    def test_evening_scope_works_independently_of_morning(self):
+        def fake_post(url, payload, headers=None, timeout=None):
+            return ok_pick_response([(0, "overlap")])
+        cfg = self.cfg(llm_highlights=["evening"])
+        out = llm.pick(self.items(5), cfg, now=NOW, scope="evening", api_key="k", post=fake_post)
+        self.assertEqual(out, [(0, "overlap")])
+
+
 class ConfigValidationTests(unittest.TestCase):
     def write(self, data):
         d = tempfile.mkdtemp()
@@ -269,6 +423,25 @@ class ConfigValidationTests(unittest.TestCase):
     def test_overlong_profile_rejected(self):
         with self.assertRaises(ConfigError):
             load_config(self.write({"llm_profile": "x" * 501}))
+
+    def test_highlights_default_off(self):
+        self.assertEqual(Config().llm_highlights, [])
+
+    def test_valid_highlights_load(self):
+        cfg = load_config(self.write({"llm_highlights": ["morning", "evening"]}))
+        self.assertEqual(cfg.llm_highlights, ["morning", "evening"])
+
+    def test_unknown_highlight_scope_rejected(self):
+        with self.assertRaises(ConfigError):
+            load_config(self.write({"llm_highlights": ["afternoon"]}))
+
+    def test_duplicate_highlight_scope_rejected(self):
+        with self.assertRaises(ConfigError):
+            load_config(self.write({"llm_highlights": ["morning", "morning"]}))
+
+    def test_non_list_highlights_rejected(self):
+        with self.assertRaises(ConfigError):
+            load_config(self.write({"llm_highlights": "morning"}))
 
 
 if __name__ == "__main__":

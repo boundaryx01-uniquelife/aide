@@ -49,8 +49,17 @@ def gather_events(cfg: Config, call: Callable[[str], List[Event]], key) -> Tuple
             entry = [e, [acct.name]]
             entries.append(entry)
             first_of.setdefault(k, entry)
-    out = [replace(e, title=f"[{'·'.join(names)}] {e.title}") if many else e for e, names in entries]
+    out = [replace(e, title=f"[{'·'.join(names)}] {e.title}", accounts=tuple(names)) if many
+           else replace(e, accounts=tuple(names)) for e, names in entries]
     return sorted(out, key=key), failed, len(accts)
+
+
+def event_excluded(e: Event, excluded_accounts: List[str]) -> bool:
+    """True if ANY account `e` came from is on the exclude list (stage 2b: which
+    calendar events may be sent to the LLM). Err on the side of excluding: a merged
+    event seen in both an excluded and a non-excluded account still counts as the
+    excluded account's event, since that account's calendar is what must stay out."""
+    return any(a in excluded_accounts for a in e.accounts)
 
 
 def failure_lines(failed: List[str], total: int) -> List[str]:
