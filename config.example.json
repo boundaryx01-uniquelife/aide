@@ -35,5 +35,7 @@
   "llm_sources": ["mail", "notice", "news"],
   "llm_exclude_accounts": [],
   "llm_max_calls_per_day": 30,
-  "llm_highlights": []
+  "llm_highlights": [],
+  "rules_enabled": false,
+  "mail_bulk_fold": false
 }

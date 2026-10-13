@@ -1,4 +1,4 @@
-# aide 인수인계 (2026-10-13, 3b·2a·2b 병합 완료 · 선호 학습 L1 설계 확정)
+# aide 인수인계 (2026-10-13, 3b·2a·2b 병합 완료 · 선호 학습 L1 구현 완료, 서버 배포 전)
 
 Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 바뀌면 이 파일도 갱신한다.
 
@@ -61,12 +61,13 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - **남은 일**: PR 생성 → main 병합 → 서버: `config.json` 에 `llm_highlights` 추가(예: `["morning", "evening"]`) → `aide-watch` 재시작 → 아침/저녁 알림에서 핵심 섹션 실제 확인.
 - 남은 확인(사용자, 2a 때부터 이어짐): Anthropic 데이터 보존·학습 정책 — 아직 미확인으로 SECURITY.md 에 남아 있음.
 
-## 다음 작업: 선호 학습 L1 (내 규칙) — `feat/prefs-rules` 브랜치, 설계 확정·구현 전
-- 설계: ARCHITECTURE.md "선호 학습 L1", 보안: SECURITY.md "선호 학습 L1". 사용자 결정(2026-10-13): 선택지 알림제외/유지/중요/수신거부, 순서 L1→L2→L3, L4(수신 거부 대행)는 별도 검토, 4번(메일 답장)은 안 함, 5번(코드 에이전트)은 보류.
-- 광고·정기 메일 기본 처리는 답을 받지 못해 권장안(한 줄로 접기)으로 설계하되 `mail_bulk_fold` 기본 꺼짐으로 둠 — 켜는 것은 사용자 선택.
-- 구현 순서(테스트 먼저): 1) `Finding.rule_key/label/bulk` + `gmail` 헤더 3개 2) `rules.py`(저장·검증·손상 처리) 3) `state` 의 digest targets·hidden 건수 4) `heartbeat` 적용(hide/pin/접기)·"■ 중요 (내 규칙)" 5) `telegram.edit_text`·URL 버튼 6) `inbox` 의 `m:`/`r:` 버튼 처리 7) 일요일 저녁 "걸러낸 것" 8) CLI `rules` 9) 설정·selfcheck·`.gitignore`·README.
-- 꼭 넣을 테스트: `rules_enabled` 꺼짐이면 버튼·적용 없음(기존 출력과 동일), 버튼 값 형식 위반·남의 클릭·만료 digest·범위 밖 번호 → 변화 없음, hide 는 LLM 요청에도 안 들어감, `mail_senders` 가 hide 보다 우선, pin 은 AI 판단보다 위·LLM 미전송, 접힌 메일도 seen 처리, hidden 건수는 메일당 한 번, 규칙 파일 손상 → 아무것도 숨기지 않음, URL 버튼은 mail.google.com 만, `List-Unsubscribe` 값이 상태·로그·메시지 어디에도 없음, 두 번 눌러도 같은 결과.
-- 권장 모델: 구현·테스트는 Sonnet.
+## 선호 학습 L1 구현 완료 (내 규칙) — `feat/prefs-rules` 브랜치, main 미병합, 서버 배포 전
+- 내용: 메일 알림 아래 [🧹 정리] → 발신자 → 알림제외/유지/중요/수신거부. 규칙은 주소 하나 단위, `data/rules.json`(깃 제외). 일요일 저녁 정리에 "걸러낸 것" 요약. `mail_bulk_fold` 로 광고·정기 메일 한 줄 접기. LLM 안 씀. 기본 꺼짐(`rules_enabled`, `mail_bulk_fold`).
+- 설계·보안 검토는 Opus, 구현·테스트는 Sonnet(사용자 지시). 설계: ARCHITECTURE.md "선호 학습 L1", 보안: SECURITY.md "선호 학습 L1". 설계 대비 달라진 점은 ARCHITECTURE.md 끝에 기록(저녁 정리 필수, 확인 후에도 정리 버튼 유지).
+- 새 파일: `src/aide/rules.py`, `src/aide/cleanup.py`, `tests/test_rules.py`. 바뀐 파일: `models.py`(Finding 필드 3개), `gmail.py`(헤더 3개 요청·bulk 감지, 마지막 항목 복사 버그 방지), `state.py`(digest targets·hidden), `telegram.py`(edit_text·set_buttons·URL 버튼), `heartbeat.py`(규칙 적용·접기·섹션·targets), `inbox.py`(m:/r: 버튼), `evening.py`(걸러낸 것), `config.py`·`__main__.py`(설정·`rules` 명령·selfcheck), `.gitignore`, `config.example.json`, README.
+- 테스트 470개 통과(기존 408 + 신규 62).
+- **남은 일**: PR 생성 → main 병합 → 서버: `config.json` 에 `"rules_enabled": true`(필요하면 `"mail_bulk_fold": true`) → `aide-watch` 재시작 → 메일 알림에서 [정리] 버튼 확인. 서버 `data/rules.json` 은 `aide` 소유 600 인지 확인.
+- 다음: L2(같은 발신자 광고·정기 메일이 반복되면 규칙 제안), L3(취향을 LLM 판단에 반영, 뉴스 입맛), L4(수신 거부 대행, 별도 검토). 2b 는 병합됐지만 서버에서 `llm_highlights` 는 아직 안 켬.
 
 ## 최근 건드린 파일
 - 3b 명령: 위 섹션 참고.

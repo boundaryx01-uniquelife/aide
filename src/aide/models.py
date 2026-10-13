@@ -25,14 +25,20 @@ class Finding:
     title    one-line summary
     detail   optional extra line
     url      optional link
-    priority 0 low, 1 normal (default), 2 high. Display order only -- never affects
-             de-duplication. Set by stage 2a's LLM ranking (llm.py); everything else
-             leaves it at the default, so sorting by priority is a no-op when the
-             feature is off or fails (stable sort preserves the original order).
+    priority 0 low, 1 normal (default), 2 high (AI judgment), 3 pinned by the owner's
+             own rule. Display order only -- never affects de-duplication. 2 is set by
+             stage 2a's LLM ranking (llm.py), 3 by the owner's rules (rules.py);
+             everything else leaves it at the default, so sorting by priority is a
+             no-op when those features are off or fail (stable sort keeps the order).
     account  which Google account this came from ("" when there is only one, or the
              finding has no account at all). Used to exclude an account from stage 2a.
     alt_keys extra ids for the SAME item (e.g. a normalized headline). The item counts as
              already seen if ANY of key/alt_keys was reported; reporting marks all of them.
+    rule_key "mail:<lowercase address>" when this is mail from a well-formed sender
+             address, else "" -- what the owner's rules (rules.py) are keyed by.
+    label    sender display name (cleaned), for buttons and the folded-mail line.
+    bulk     True when the headers say bulk/list mail (List-Unsubscribe, List-Id or
+             Precedence present). Only the PRESENCE is recorded, never the values.
     """
 
     key: str
@@ -43,3 +49,6 @@ class Finding:
     priority: int = 1
     account: str = ""
     alt_keys: Tuple[str, ...] = ()
+    rule_key: str = ""
+    label: str = ""
+    bulk: bool = False

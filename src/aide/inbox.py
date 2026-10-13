@@ -17,7 +17,7 @@ import time
 from datetime import datetime
 from typing import Iterable, List, Optional, Tuple
 
-from . import commands, telegram
+from . import cleanup, commands, rules as rules_mod, telegram
 from .config import Config
 from .state import State, locked
 
@@ -63,8 +63,11 @@ def release_watcher(cfg: Config) -> None:
         pass
 
 
-def buttons_for(digest_id: str):
-    return [[("✅ 확인", f"d:{digest_id}:ok"), ("🔕 무시", f"d:{digest_id}:skip"), ("⏰ 나중에", f"d:{digest_id}:later")]]
+def buttons_for(digest_id: str, with_clean: bool = False):
+    rows = [[("✅ 확인", f"d:{digest_id}:ok"), ("🔕 무시", f"d:{digest_id}:skip"), ("⏰ 나중에", f"d:{digest_id}:later")]]
+    if with_clean:   # stage L1: only when this digest lists at least one mail sender
+        rows.append([("🧹 정리", f"m:{digest_id}:open")])
+    return rows
 
 
 def is_allowed(update: dict, allowed_chat_id: str) -> bool:
@@ -135,6 +138,7 @@ def process_updates(
     enabled_commands: Iterable[str] = (),
     now: Optional[datetime] = None,
     api=telegram,
+    rule_set=None,
 ) -> Tuple[int, List[str]]:
     """Apply button presses to `state`, and decide which stage-3b commands may run.
 
@@ -167,7 +171,21 @@ def process_updates(
                 log.info("무시한 업데이트: %s", _describe(u, allowed_chat_id))
                 continue
             cq = u["callback_query"]
-            m = CALLBACK_RE.match(cq.get("data") if isinstance(cq.get("data"), str) else "")
+            data = cq.get("data") if isinstance(cq.get("data"), str) else ""
+            if cleanup.is_cleanup_data(data):
+                # Stage L1 buttons. With rules switched off they get the same "expired"
+                # answer as any stale button -- nothing is read or changed.
+                toast = cleanup.EXPIRED
+                if rule_set is not None:
+                    toast = cleanup.handle(data, cq, state=state, rule_set=rule_set, token=token,
+                                           chat_id=str(allowed_chat_id), api=api, now=now)
+                    handled += 1
+                try:
+                    api.answer_callback(token, str(cq.get("id", "")), toast)
+                except telegram.TelegramError as e:
+                    log.info("토스트 표시 실패: %s", e)
+                continue
+            m = CALLBACK_RE.match(data)
             outcome = None
             if not m:
                 reply = "알 수 없는 버튼이에요"
@@ -183,8 +201,13 @@ def process_updates(
             except telegram.TelegramError as e:
                 log.info("토스트 표시 실패(오래된 버튼이면 정상, 기록은 반영됨): %s", e)
             if m and (outcome in REPLIES or outcome == "dup"):  # also on a repeat press: tidy up a stuck keyboard
+                keep_clean = rule_set is not None and bool((state.digests.get(m.group(1)) or {}).get("targets"))
                 try:
-                    api.clear_buttons(token, str(allowed_chat_id), int(cq["message"]["message_id"]))
+                    if keep_clean:   # stage L1: leave only the 정리 button so the owner can still use it
+                        api.set_buttons(token, str(allowed_chat_id), int(cq["message"]["message_id"]),
+                                        [[("🧹 정리", f"m:{m.group(1)}:open")]])
+                    else:
+                        api.clear_buttons(token, str(allowed_chat_id), int(cq["message"]["message_id"]))
                 except (telegram.TelegramError, KeyError, TypeError, ValueError) as e:
                     log.info("버튼 제거 실패(기록은 반영됨): %s", e)
             continue
@@ -242,8 +265,12 @@ def poll_once(
         return 0
     with locked(path):
         state = State(path)  # re-read: heartbeat may have written meanwhile
+        rule_set = rules_mod.Rules(rules_mod.path_for(path)) if cfg.rules_enabled else None
         handled, to_run = process_updates(
-            updates, state, token=token, allowed_chat_id=chat_id, enabled_commands=cfg.commands, now=now, api=api)
+            updates, state, token=token, allowed_chat_id=chat_id, enabled_commands=cfg.commands, now=now, api=api,
+            rule_set=rule_set)
+        if rule_set is not None:
+            rule_set.save()   # same lock as the state: one writer at a time
         state.save()
     for name in to_run:
         touch_watcher(cfg)

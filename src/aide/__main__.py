@@ -46,6 +46,10 @@ def main(argv=None) -> int:
     nt.add_argument("url", nargs="?", help="한 페이지만 시험 (생략하면 config 의 notice_pages 전체)")
     nt.add_argument("--config", help="설정 파일 경로")
 
+    ru = sub.add_parser("rules", help="내 메일 규칙 목록 / 삭제 (알림제외·중요)")
+    ru.add_argument("--remove", metavar="ID", help="지울 규칙의 id(목록의 8자리) 또는 mail:주소")
+    ru.add_argument("--config", help="설정 파일 경로")
+
     sc = sub.add_parser("selfcheck", help="설정과 환경 점검 (비밀값은 출력하지 않음)")
     sc.add_argument("--config", help="설정 파일 경로")
 
@@ -73,6 +77,8 @@ def main(argv=None) -> int:
         print(f"llm              : {'켜짐 (' + cfg.llm_model + ')' if cfg.llm_enabled else '꺼짐'}"
               f" / ANTHROPIC_API_KEY {'설정됨' if os.environ.get('ANTHROPIC_API_KEY') else '없음'}")
         print(f"llm_highlights   : {', '.join(cfg.llm_highlights) if cfg.llm_highlights else '꺼짐'}")
+        print(f"rules            : {'켜짐' if cfg.rules_enabled else '꺼짐'}"
+              f" / 광고·정기 메일 접기 {'켜짐' if cfg.mail_bulk_fold else '꺼짐'}")
         accts = cfg.accounts()
         if len(accts) == 1:
             print(f"calendar         : {'켜짐' if cfg.calendar_enabled else '꺼짐'}"
@@ -127,6 +133,9 @@ def main(argv=None) -> int:
             return 1
         return 0
 
+    if args.cmd == "rules":
+        return _rules(cfg, remove=args.remove)
+
     if args.cmd == "morning":
         return morning.run(cfg, send=args.send, force=args.force)
 
@@ -137,6 +146,34 @@ def main(argv=None) -> int:
         return _poll(cfg, watch=args.watch)
 
     return run(cfg, send=args.send, force=args.force)
+
+
+def _rules(cfg, *, remove) -> int:
+    from . import rules as rules_mod
+    from .state import StateLocked, locked
+    path = cfg.resolved_state_path()
+    try:
+        with locked(path):
+            rs = rules_mod.Rules(rules_mod.path_for(path))
+            if remove:
+                key = remove if rules_mod.valid_key(remove) else rs.find_by_id(remove)
+                if key is None or not rs.remove(key):
+                    print(f"그런 규칙이 없습니다: {remove}", file=sys.stderr)
+                    return 1
+                rs.save()
+                print("지웠습니다.")
+                return 0
+            if not rs.rules:
+                print("저장된 규칙이 없습니다." + ("" if cfg.rules_enabled else " (rules_enabled 가 꺼져 있어 적용도 되지 않습니다)"))
+                return 0
+            for key, rec in rs.recent(200):
+                print(f"{rules_mod.rule_id(key)}  {rules_mod.ACTION_LABELS[rec['action']]:<5} {rec.get('label', '')} <{key[5:]}>")
+            if not cfg.rules_enabled:
+                print("(rules_enabled 가 꺼져 있어 지금은 적용되지 않습니다)")
+            return 0
+    except StateLocked as e:
+        print(f"{e} 잠시 뒤 다시 실행하세요.", file=sys.stderr)
+        return 1
 
 
 def _poll(cfg, *, watch: bool) -> int:

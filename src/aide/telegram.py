@@ -62,9 +62,22 @@ def _call(method: str, token: str, params: dict, timeout: float = 15) -> Any:
     return payload.get("result")
 
 
+URL_PREFIX = "https://mail.google.com/"   # the ONLY link a button may open
+
+
+def _button(text: str, data: str) -> dict:
+    """A callback button, or -- when `data` is an https://mail.google.com/ link -- a URL
+    button. Any other URL is refused: buttons never open an address a sender chose."""
+    if data.startswith(("http://", "https://")):
+        if not data.startswith(URL_PREFIX):
+            raise TelegramError("허용되지 않은 버튼 주소입니다.")
+        return {"text": text, "url": data}
+    return {"text": text, "callback_data": data}
+
+
 def _keyboard(buttons: Buttons) -> str:
     return json.dumps(
-        {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in row] for row in buttons]},
+        {"inline_keyboard": [[_button(t, d) for t, d in row] for row in buttons]},
         ensure_ascii=False,
     )
 
@@ -116,3 +129,18 @@ def clear_buttons(token: str, chat_id: str, message_id: int) -> None:
         token,
         {"chat_id": chat_id, "message_id": message_id, "reply_markup": json.dumps({"inline_keyboard": []})},
     )
+
+
+def edit_text(token: str, chat_id: str, message_id: int, text: str, buttons: Optional[Buttons] = None) -> None:
+    """Replace a message's text (plain, no parse_mode) and its keyboard (none if `buttons` is empty)."""
+    params = {"chat_id": chat_id, "message_id": message_id, "text": split_message(text)[0],
+              "disable_web_page_preview": "true"}
+    params["reply_markup"] = _keyboard(buttons) if buttons else json.dumps({"inline_keyboard": []})
+    _call("editMessageText", token, params)
+
+
+def set_buttons(token: str, chat_id: str, message_id: int, buttons: Buttons) -> None:
+    """Swap a message's keyboard for `buttons` without touching its text."""
+    _call("editMessageReplyMarkup", token,
+          {"chat_id": chat_id, "message_id": message_id, "reply_markup": _keyboard(buttons)})
+

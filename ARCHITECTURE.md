@@ -126,7 +126,7 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 
 **설정**: `llm_highlights: []` (기본 꺼짐, `["morning", "evening"]` 중 선택. `"evening"` 은 일요일 주간 브리핑 포함). `llm_enabled`·`llm_model`·`llm_exclude_accounts`·`llm_max_calls_per_day`(2a 와 합산)를 그대로 쓴다. `selfcheck` 에 한 줄.
 
-## 선호 학습 L1: 내 규칙과 광고·정기 메일 정리 — 설계 확정 2026-10-13, 구현 전
+## 선호 학습 L1: 내 규칙과 광고·정기 메일 정리 — 구현 완료 2026-10-13, 서버 배포 전
 "알려 주기"에서 "내 반응을 기억해 다음부터 다르게 하기"로 가는 첫 단계. **LLM 을 쓰지 않는다.** 규칙은 선생님의 버튼에서만 생기고, 발신자 **주소 하나** 단위다. 전체 계획은 L1 규칙 → L2 패턴 보고 규칙 제안 → L3 취향을 LLM 판단에 반영(뉴스 입맛) → L4 수신 거부 대행(별도 검토).
 
 **버튼 흐름** (전부 `callback_query`, 글자 입력 없음)
@@ -159,4 +159,10 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 **텔레그램**: `telegram.edit_text()`(editMessageText) 추가. 버튼 값이 `https://mail.google.com/` 으로 시작하면 URL 버튼으로 만든다(그 밖의 URL 은 거부).
 
 **설정** (기본 꺼짐): `rules_enabled: false`, `mail_bulk_fold: false`. `.gitignore` 에 `data/rules.json`, `data/rules.json.tmp` 추가(발신자 주소가 들어 있음).
+
+**구현 시 설계에서 달라진 점**
+- 규칙을 쓰려면 `evening_hour` 도 있어야 한다(`load_config` 가 검사). "걸러낸 것" 주간 요약이 안전망인데 저녁 정리가 꺼져 있으면 요약이 어디에도 나오지 않기 때문이다.
+- ✅/🔕/⏰ 를 누르면 키보드 전체를 지우던 것을, 그 알림에 정리 대상이 있으면 **[🧹 정리] 한 개만 남기도록** 바꿨다(`telegram.set_buttons`).
+- 버튼 처리는 `cleanup.py`(정규식·흐름), 규칙 저장은 `rules.py`, 적용(`rules.apply`)과 접기·섹션은 `heartbeat.py` 가 맡는다. 미리보기도 규칙을 적용하지만 상태는 바꾸지 않는다.
+- 접힌 메일만 있고 보여 줄 것이 없으면 알림을 보내지 않고 본 것으로도 표시하지 않는다(다음 알림에 실림).
 

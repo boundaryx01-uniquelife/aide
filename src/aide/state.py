@@ -70,6 +70,7 @@ class State:
         self.offset: int = 0
         self.cmd_times: List[float] = []  # stage 3b: timestamps of executed commands, for rate limiting
         self.llm_calls: Dict[str, int] = {}  # stage 2a: date (ISO) -> call count, for the daily budget
+        self.hidden: Dict[str, Dict[str, int]] = {}  # stage L1: date (ISO) -> {rule_key: count} of mail left out
         self._load()
 
     def _load(self) -> None:
@@ -83,12 +84,20 @@ class State:
                     "keys": [str(x) for x in v["keys"]],
                     "at": str(v["at"]),
                     "status": str(v.get("status", "pending")),
+                    "targets": [
+                        {"k": str(x["k"]), "l": str(x.get("l", "")), "u": str(x.get("u", ""))}
+                        for x in v.get("targets", []) if isinstance(x, dict) and "k" in x
+                    ],
                 }
                 for k, v in dict(data.get("digests", {})).items()
             }
             self.offset = int(data.get("offset", 0))
             self.cmd_times = [float(x) for x in data.get("cmd_times", [])]
             self.llm_calls = {str(k): int(v) for k, v in dict(data.get("llm_calls", {})).items()}
+            self.hidden = {
+                str(d): {str(k): int(n) for k, n in dict(counts).items()}
+                for d, counts in dict(data.get("hidden", {})).items()
+            }
         except (json.JSONDecodeError, OSError, ValueError, AttributeError, KeyError, TypeError):
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             backup = self.path.with_name(f"{self.path.name}.corrupt-{stamp}")
@@ -98,6 +107,7 @@ class State:
             except OSError:
                 log.warning("상태 파일을 읽을 수 없어 새로 시작합니다.")
             self.seen, self.digests, self.offset, self.cmd_times, self.llm_calls = {}, {}, 0, [], {}
+            self.hidden = {}
 
     def is_seen(self, key: str) -> bool:
         return key in self.seen
@@ -105,11 +115,14 @@ class State:
     def mark(self, key: str, now: datetime) -> None:
         self.seen[key] = now.isoformat(timespec="seconds")
 
-    def add_digest(self, digest_id: str, keys, now: datetime) -> None:
+    def add_digest(self, digest_id: str, keys, now: datetime, targets=None) -> None:
+        """`targets` (stage L1): [{"k": rule_key, "l": label, "u": gmail link}, ...] -- the
+        senders the owner may open "정리" on for this digest (max 8)."""
         self.digests[digest_id] = {
             "keys": list(keys),
             "at": now.isoformat(timespec="seconds"),
             "status": "pending",
+            "targets": [dict(x) for x in (targets or [])][:8],
         }
 
     def resolve_digest(self, digest_id: str, action: str) -> Optional[str]:
@@ -157,6 +170,24 @@ class State:
         key = now.date().isoformat()
         self.llm_calls[key] = self.llm_calls.get(key, 0) + 1
 
+    def add_hidden(self, rule_key: str, now: datetime) -> None:
+        day = self.hidden.setdefault(now.date().isoformat(), {})
+        day[rule_key] = day.get(rule_key, 0) + 1
+
+    def hidden_summary(self, now: datetime, days: int = 7) -> Dict[str, int]:
+        """rule_key -> how many mails were left out in the last `days` days (incl. today)."""
+        first = now.date() - timedelta(days=days - 1)
+        out: Dict[str, int] = {}
+        for d, counts in self.hidden.items():
+            try:
+                if date.fromisoformat(d) < first:
+                    continue
+            except ValueError:
+                continue
+            for k, n in counts.items():
+                out[k] = out.get(k, 0) + n
+        return out
+
     def prune(self, now: datetime, days: int = 45) -> int:
         cutoff = now - timedelta(days=days)
 
@@ -171,6 +202,13 @@ class State:
             del self.seen[k]
         for d in [d for d, rec in self.digests.items() if old(rec["at"])]:
             del self.digests[d]
+        keep_from = now.date() - timedelta(days=8)
+        for d in list(self.hidden):
+            try:
+                if date.fromisoformat(d) < keep_from:
+                    del self.hidden[d]
+            except ValueError:
+                del self.hidden[d]
         return len(drop)
 
     def save(self) -> None:
@@ -179,7 +217,7 @@ class State:
         tmp.write_text(
             json.dumps(
                 {"seen": self.seen, "digests": self.digests, "offset": self.offset,
-                 "cmd_times": self.cmd_times, "llm_calls": self.llm_calls},
+                 "cmd_times": self.cmd_times, "llm_calls": self.llm_calls, "hidden": self.hidden},
                 ensure_ascii=False,
                 indent=1,
                 sort_keys=True,

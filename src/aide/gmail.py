@@ -7,6 +7,7 @@ address is re-checked locally. Sender name and subject are untrusted text -> cle
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from datetime import datetime, timedelta
 from email.utils import parseaddr
 from typing import Callable, Iterable, List
@@ -18,6 +19,9 @@ from .models import Finding, clean
 BASE = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
 _ENTRY = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$|^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 _ID = re.compile(r"^[0-9a-f]{8,32}$")
+# A full, well-formed sender address (NOT a bare domain) -- the only thing a rule may be keyed by.
+ADDR_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
+BULK_HEADERS = ("List-Unsubscribe", "List-Id", "Precedence")
 NEWER_THAN = "2d"
 
 
@@ -54,18 +58,23 @@ def query_for(senders: List[str]) -> str:
 
 def _headers(token: str, mid: str, get: Callable):
     mq = urlencode([("format", "metadata"), ("metadataHeaders", "From"), ("metadataHeaders", "Subject"),
-                    ("fields", "id,payload/headers")])
+                    *[("metadataHeaders", h) for h in BULK_HEADERS], ("fields", "id,payload/headers")])
     msg = get(f"{BASE}/{mid}?{mq}", headers={"Authorization": f"Bearer {token}"})
     heads = {h.get("name", "").lower(): h.get("value", "")
              for h in ((msg.get("payload") or {}).get("headers") or []) if isinstance(h, dict)} if isinstance(msg, dict) else {}
     name, addr = parseaddr(heads.get("from", ""))
-    return name, addr, heads.get("subject", "")
+    # Only whether a bulk-mail header EXISTS is kept; its value (e.g. an unsubscribe URL
+    # chosen by the sender) is never read, stored or shown.
+    bulk = any(h.lower() in heads for h in BULK_HEADERS)
+    return name, addr, heads.get("subject", ""), bulk
 
 
-def _finding(mid: str, name: str, addr: str, subject: str) -> Finding:
+def _finding(mid: str, name: str, addr: str, subject: str, bulk: bool = False) -> Finding:
     who = clean(name, 40) or clean(addr, 60)
+    addr = addr.strip().lower()
     return Finding(key=f"mail:{mid}", source="mail", title=f"{who}: {clean(subject, 120) or '(제목 없음)'}",
-                   url=f"https://mail.google.com/mail/u/0/#all/{mid}")
+                   url=f"https://mail.google.com/mail/u/0/#all/{mid}",
+                   rule_key=f"mail:{addr}" if ADDR_RE.match(addr) else "", label=who, bulk=bulk)
 
 
 def _list_ids(token: str, query: str, limit: int, get: Callable) -> List[str]:
@@ -83,10 +92,10 @@ def unread_from(token: str, senders: List[str], max_items: int = 5, get: Callabl
     for mid in _list_ids(token, query_for(senders), max_items * 2, get):
         if len(out) >= max_items:
             break
-        name, addr, subject = _headers(token, mid, get)
+        name, addr, subject, bulk = _headers(token, mid, get)
         if not _allowed(addr, senders):
             continue  # defence in depth: never show mail the allowlist does not cover
-        out.append(_finding(mid, name, addr, subject))
+        out.append(_finding(mid, name, addr, subject, bulk))
     return out
 
 
@@ -104,13 +113,13 @@ def recent_unread(token: str, max_items: int, window_hours: int, blocked: Iterab
     ids = _list_ids(token, recent_query(blocked, since), max_items + 10, get)
     out: List[Finding] = []
     for mid in ids[:max_items]:
-        name, addr, subject = _headers(token, mid, get)
+        name, addr, subject, bulk = _headers(token, mid, get)
         if blocked and _allowed(addr, blocked):
             continue
-        out.append(_finding(mid, name, addr, subject))
+        out.append(_finding(mid, name, addr, subject, bulk))
     extra = len(ids) - max_items
     if out and extra > 0:
         last = out[-1]
         more = "10건 이상" if extra >= 10 else f"{extra}건"
-        out[-1] = Finding(last.key, last.source, last.title, f"…이 외에 {more} 더 (Gmail 에서 확인)", last.url)
+        out[-1] = replace(last, detail=f"…이 외에 {more} 더 (Gmail 에서 확인)")
     return out
