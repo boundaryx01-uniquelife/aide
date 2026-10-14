@@ -18,6 +18,8 @@ class GcalTests(unittest.TestCase):
         calls = []
 
         def get(url, headers=None):
+            if "calendarList" in url:
+                return {"items": []}
             calls.append((url, headers))
             return {"items": items}
 
@@ -63,12 +65,149 @@ class GcalTests(unittest.TestCase):
         self.assertEqual(gcal.today_events("T", NOW, get=lambda *a, **k: {"items": ["x", 3]}), [])
 
 
+class ChosenCalendarsTests(unittest.TestCase):
+    """Calendars other than the main one (e.g. "work") are read only when the account's
+    `calendars` setting names them; nothing configured = main calendar only."""
+    CALS = {"items": [
+        {"id": "me@gmail.com", "summary": "me@gmail.com", "primary": True},
+        {"id": "w1", "summary": "work"},
+        {"id": "c2", "summary": "발명센터"},
+        {"id": "f3", "summary": "Family"},
+        "junk", {"id": 5}, {"summary": "no id"},
+    ]}
+
+    def run_it(self, names, per_cal=None, cals=None, fail=()):
+        urls = []
+        per_cal = per_cal or {}
+
+        def get(url, headers=None):
+            if "calendarList" in url:
+                if cals == "FAIL":
+                    raise netutil.NetError("x")
+                return self.CALS if cals is None else cals
+            urls.append(url)
+            for name in fail:
+                if f"/calendars/{name}/events" in url:
+                    raise netutil.NetError("boom")
+            for name, items in per_cal.items():
+                if f"/calendars/{name}/events" in url:
+                    return {"items": items}
+            return {"items": []}
+        with gcal.only_calendars(names):
+            evs = gcal.today_events("T", NOW, get=get)
+        return evs, urls
+
+    def test_nothing_configured_reads_only_primary_without_listing(self):
+        _, urls = self.run_it(())
+        self.assertEqual(len(urls), 1)
+        self.assertIn("/calendars/primary/events", urls[0])
+
+    def test_named_calendars_only(self):
+        _, urls = self.run_it(("기본", "work"))
+        self.assertEqual(len(urls), 2)
+        self.assertIn("/calendars/me%40gmail.com/events", urls[0])
+        self.assertIn("/calendars/w1/events", urls[1])      # "발명센터", "Family" not asked for
+
+    def test_work_only_does_not_read_primary(self):
+        _, urls = self.run_it(("work",))
+        self.assertEqual(len(urls), 1)
+        self.assertIn("/calendars/w1/events", urls[0])
+
+    def test_korean_names_and_order(self):
+        _, urls = self.run_it(("기본", "발명센터", "Family"))
+        self.assertEqual([u.split("/calendars/")[1].split("/")[0] for u in urls], ["me%40gmail.com", "c2", "f3"])
+
+    def test_unicode_normalization_and_spaces_do_not_matter(self):
+        import unicodedata
+        _, urls = self.run_it((unicodedata.normalize("NFD", " 발명센터 "),))
+        self.assertIn("/calendars/c2/events", urls[0])
+
+    def test_id_also_works_and_english_primary(self):
+        _, urls = self.run_it(("primary", "w1"))
+        self.assertEqual(len(urls), 2)
+
+    def test_events_from_chosen_calendars_are_merged_in_order(self):
+        evs, _ = self.run_it(("기본", "work"), {
+            "me%40gmail.com": [ev(summary="기본 일정", start={"dateTime": "2026-10-03T15:00:00+09:00"})],
+            "w1": [ev(summary="수학여행", start={"dateTime": "2026-10-03T09:00:00+09:00"})],
+        })
+        self.assertEqual([(e.when, e.title) for e in evs], [("09:00", "수학여행"), ("15:00", "기본 일정")])
+
+    def test_same_event_on_two_calendars_shown_once(self):
+        same = ev(summary="회의", start={"dateTime": "2026-10-03T09:00:00+09:00"})
+        evs, _ = self.run_it(("기본", "work"), {"me%40gmail.com": [same], "w1": [same]})
+        self.assertEqual(len(evs), 1)
+
+    def test_same_name_twice_is_read_once(self):
+        _, urls = self.run_it(("work", "work", "w1"))
+        self.assertEqual(len(urls), 1)
+
+    def test_unknown_name_is_skipped_others_still_read(self):
+        with self.assertLogs("aide.gcal", "WARNING"):
+            _, urls = self.run_it(("없는캘린더", "work"))
+        self.assertEqual(len(urls), 1)
+        self.assertIn("/calendars/w1/events", urls[0])
+
+    def test_nothing_matches_falls_back_to_primary(self):
+        with self.assertLogs("aide.gcal", "WARNING"):
+            _, urls = self.run_it(("없는캘린더",))
+        self.assertIn("/calendars/primary/events", urls[0])
+
+    def test_calendar_list_failure_falls_back_to_primary(self):
+        with self.assertLogs("aide.gcal", "WARNING"):
+            _, urls = self.run_it(("work",), cals="FAIL")
+        self.assertEqual(len(urls), 1)
+        self.assertIn("/calendars/primary/events", urls[0])
+
+    def test_odd_calendar_list_falls_back_to_primary(self):
+        for cals in ({"items": []}, {"items": "x"}, []):
+            with self.assertLogs("aide.gcal", "WARNING"):
+                _, urls = self.run_it(("work",), cals=cals)
+            self.assertIn("/calendars/primary/events", urls[0])
+
+    def test_primary_without_flag_still_means_primary(self):
+        _, urls = self.run_it(("기본",), cals={"items": [{"id": "w1", "summary": "work"}]})
+        self.assertIn("/calendars/primary/events", urls[0])
+
+    def test_one_broken_calendar_is_skipped(self):
+        evs, _ = self.run_it(("기본", "work"), {"w1": [ev(summary="살아있음", start={"date": "2026-10-03"})]},
+                             fail=("me%40gmail.com",))
+        self.assertEqual([e.title for e in evs], ["살아있음"])
+
+    def test_all_calendars_failing_raises(self):
+        with self.assertRaises(netutil.NetError):
+            self.run_it(("기본", "work"), fail=("me%40gmail.com", "w1"))
+
+    def test_setting_is_restored_after_the_block(self):
+        with gcal.only_calendars(("work",)):
+            pass
+        self.assertEqual(gcal.calendar_ids("T", lambda *a, **k: self.fail("listed")), ["primary"])
+
+    def test_week_view_reads_chosen_calendars_too(self):
+        from datetime import date
+        calls = []
+
+        def get(url, headers=None):
+            if "calendarList" in url:
+                return self.CALS
+            calls.append(url)
+            if "/calendars/w1/" in url:
+                return {"items": [ev(summary="출장", start={"dateTime": "2026-10-05T15:00:00+09:00"})]}
+            return {"items": []}
+        with gcal.only_calendars(("기본", "work")):
+            evs = gcal.events_between("T", date(2026, 10, 5), 7, get=get)
+        self.assertEqual([e.title for e in evs], ["출장"])
+        self.assertEqual(len(calls), 2)
+
+
 class EventsBetweenTests(unittest.TestCase):
     def run_it(self, items, first=None, days=7):
         from datetime import date
         calls = []
 
         def get(url, headers=None):
+            if "calendarList" in url:
+                return {"items": []}
             calls.append(url)
             return {"items": items}
         return gcal.events_between("T", first or date(2026, 10, 5), days, get=get), calls

@@ -22,10 +22,12 @@ class Account:
     name: str
     token_path: Path
     email: str = ""
+    calendars: tuple = ()   # names of the calendars to read; () = only the main one
 
 
 _EMAIL = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
 MAX_ACCOUNTS = 8
+MAX_CALENDARS_PER_ACCOUNT = 8
 # Stage 3b command names. Fixed set on purpose: `commands` in config.json can only
 # pick a subset of these, never introduce a new one.
 COMMAND_NAMES = ("오늘", "일정", "마감", "메일")
@@ -100,7 +102,8 @@ class Config:
     def accounts(self) -> List[Account]:
         if not self.google_accounts:
             return [Account("", self.resolved_google_token())]
-        return [Account(a["name"], _resolve(a["token_path"]), a.get("email", "")) for a in self.google_accounts]
+        return [Account(a["name"], _resolve(a["token_path"]), a.get("email", ""), tuple(a.get("calendars", ())))
+                for a in self.google_accounts]
 
 
 def _resolve(value: str) -> Path:
@@ -202,8 +205,8 @@ def _check_accounts(accounts) -> None:
         raise ConfigError(f"google_accounts 는 계정 목록(최대 {MAX_ACCOUNTS}개)이어야 합니다.")
     names, paths = set(), set()
     for a in accounts:
-        if not isinstance(a, dict) or set(a) - {"name", "token_path", "email"}:
-            raise ConfigError('google_accounts 항목은 {"name", "token_path", "email"(선택)} 만 쓸 수 있습니다.')
+        if not isinstance(a, dict) or set(a) - {"name", "token_path", "email", "calendars"}:
+            raise ConfigError('google_accounts 항목은 {"name", "token_path", "email"(선택), "calendars"(선택)} 만 쓸 수 있습니다.')
         name, path, email = a.get("name"), a.get("token_path"), a.get("email", "")
         if not isinstance(name, str) or not name.strip() or len(name) > 20 or "\n" in name:
             raise ConfigError("google_accounts 의 name 은 20자 이하의 비어 있지 않은 한 줄 글자여야 합니다.")
@@ -211,6 +214,11 @@ def _check_accounts(accounts) -> None:
             raise ConfigError(f"google_accounts[{name}] 의 token_path 가 필요합니다.")
         if not isinstance(email, str) or (email and not _EMAIL.match(email)):
             raise ConfigError(f"google_accounts[{name}] 의 email 형식이 올바르지 않습니다.")
+        cals = a.get("calendars", [])
+        if (not isinstance(cals, list) or len(cals) > MAX_CALENDARS_PER_ACCOUNT or len(set(cals)) != len(cals)
+                or any(not isinstance(c, str) or not c.strip() or len(c) > 60 or "\n" in c for c in cals)):
+            raise ConfigError(f"google_accounts[{name}] 의 calendars 는 서로 다른 캘린더 이름(60자 이하) 목록"
+                              f"(최대 {MAX_CALENDARS_PER_ACCOUNT}개)이어야 합니다.")
         if name in names or path in paths:
             raise ConfigError("google_accounts 의 name 과 token_path 는 서로 달라야 합니다.")
         names.add(name)

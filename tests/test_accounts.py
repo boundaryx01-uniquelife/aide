@@ -61,6 +61,19 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaises(ConfigError):
                     load_config(self.write({"google_accounts": accts}))
 
+    def test_calendars_setting(self):
+        cfg = load_config(self.write({"google_accounts": [
+            dict(A, calendars=["기본", "발명센터"]), B]}))
+        self.assertEqual(cfg.accounts()[0].calendars, ("기본", "발명센터"))
+        self.assertEqual(cfg.accounts()[1].calendars, ())
+        self.assertEqual(Config().accounts()[0].calendars, ())
+
+    def test_bad_calendars_rejected(self):
+        for cals in ("work", [1], [""], ["a", "a"], ["x" * 61], ["a\nb"], [f"c{i}" for i in range(9)], None):
+            with self.subTest(cals=str(cals)[:30]):
+                with self.assertRaises(ConfigError):
+                    load_config(self.write({"google_accounts": [dict(A, calendars=cals)]}))
+
     def test_valid_config_loads(self):
         cfg = load_config(self.write({"google_accounts": [A, B]}))
         self.assertEqual(len(cfg.accounts()), 2)
@@ -123,6 +136,19 @@ class GatherEventsTests(unittest.TestCase):
         with mock.patch.object(google_auth, "access_token", side_effect=google_auth.GoogleAuthError("no")):
             out, failed, total = accounts.gather_events(cfg2(), lambda t: [], self.key)
         self.assertEqual((out, failed, total), ([], ["개인", "학교"], 2))
+
+    def test_each_account_reads_only_its_own_calendars(self):
+        from aide import gcal
+        seen = {}
+
+        def call(token):
+            seen[token] = gcal._calendars.get()
+            return []
+        cfg = Config(google_accounts=[dict(A, calendars=["기본", "work"]), B])
+        with mock.patch.object(google_auth, "access_token", fake_token):
+            accounts.gather_events(cfg, call, self.key)
+        self.assertEqual(seen, {"google_token.json": ("기본", "work"), "google_token_school.json": ()})
+        self.assertEqual(gcal._calendars.get(), ())     # not left set after the run
 
     def test_failure_lines(self):
         self.assertEqual(accounts.failure_lines([], 2), [])

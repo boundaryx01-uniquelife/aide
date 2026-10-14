@@ -11,7 +11,7 @@ from dataclasses import replace
 from typing import Callable, List, Tuple
 from urllib.parse import quote
 
-from . import google_auth, netutil
+from . import gcal, google_auth, netutil
 from .config import Account, Config
 from .gcal import Event
 from .models import Finding
@@ -35,7 +35,8 @@ def gather_events(cfg: Config, call: Callable[[str], List[Event]], key) -> Tuple
     for acct in accts:
         try:
             token = google_auth.access_token(cfg.resolved_google_client(), acct.token_path)
-            events = call(token)
+            with gcal.only_calendars(acct.calendars):
+                events = call(token)
         except (google_auth.GoogleAuthError, netutil.NetError) as e:
             log.warning("일정 조회 실패%s: %s", f" ({acct.name})" if many else "", e)
             failed.append(acct.name or "계정")

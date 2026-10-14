@@ -371,7 +371,8 @@ class HighlightTests(unittest.TestCase):
             return [(0, "important")]
 
         with mock.patch.object(evening.llm, "pick", side_effect=fake_pick), \
-                mock.patch.object(ga, "access_token", return_value="T"):
+                mock.patch.object(ga, "access_token", return_value="T"), \
+                mock.patch.dict("os.environ", ENV):
             self.assertEqual(
                 evening.run(self.cfg, send=True, now=NOW, sender=self.sender, fetch=fetch,
                             fetch_week=lambda t, f, d: week_events),
