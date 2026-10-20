@@ -34,6 +34,10 @@ def _open(req: urllib.request.Request, timeout: float) -> Any:
         raise NetError(f"HTTP {e.code}", status=e.code) from None
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise NetError(f"연결 실패: {type(e).__name__}") from None
+    except ValueError:
+        # e.g. http.client refusing a header value (a stray newline in an API key). Its message
+        # would quote the value, so say nothing about it.
+        raise NetError("요청을 만들 수 없습니다 (헤더 형식).") from None
     if len(raw) > MAX_BYTES:
         raise NetError("응답이 너무 큽니다.")
     if not raw.strip():

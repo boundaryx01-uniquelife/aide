@@ -37,5 +37,7 @@
   "llm_max_calls_per_day": 30,
   "llm_highlights": [],
   "rules_enabled": false,
-  "mail_bulk_fold": false
+  "mail_bulk_fold": false,
+  "chat_enabled": false,
+  "chat_max_per_day": 20
 }

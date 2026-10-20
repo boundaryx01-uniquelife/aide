@@ -14,12 +14,13 @@ import logging
 import os
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple, Union
 
-from . import cleanup, commands, rules as rules_mod, telegram
+from . import chat, cleanup, commands, rules as rules_mod, telegram
 from .config import Config
-from .state import State, locked
+from .state import State, StateLocked, locked
 
 log = logging.getLogger("aide.inbox")
 
@@ -121,6 +122,13 @@ def _describe_message(u, allowed_chat_id: str) -> str:
     return f"{who} / {where}" + extra
 
 
+@dataclass(frozen=True)
+class Notice:
+    """A short notice for the owner ("늦게 받은 명령…", "모르는 명령이에요"). Collected while the state
+    lock is held and sent only after it is released, at most one of each kind per batch."""
+    text: str
+
+
 def _reply(api, token: str, chat_id: str, text: str) -> None:
     """Best-effort plain-text reply (notices, "모르는 명령이에요", ...). Never raises."""
     try:
@@ -139,7 +147,8 @@ def process_updates(
     now: Optional[datetime] = None,
     api=telegram,
     rule_set=None,
-) -> Tuple[int, List[str]]:
+    chat_max_per_day: int = 0,
+) -> Tuple[int, List[Union[str, chat.ChatRequest, Notice]]]:
     """Apply button presses to `state`, and decide which stage-3b commands may run.
 
     Returns (how many updates were acted on, canonical command names to execute
@@ -150,13 +159,25 @@ def process_updates(
     Button presses are idempotent, so redelivery after a crash is harmless. Commands
     are "at most once": the batch/hour counters are consumed here, under the lock,
     before the command actually runs, so a crash mid-reply never re-runs it.
+
+    Stage C1: with `chat_max_per_day` > 0 a plain sentence (not starting with "/", not a
+    command word) becomes a `chat.ChatRequest` in the same list. It shares the batch/hour
+    limits with commands and also spends one unit of the separate daily chat budget, taken
+    here under the lock before the model is called. Chat has its own hourly limit, so sentences
+    never use up the `/명령` allowance.
+
+    Notices to the owner come back in the same list as `Notice` items: nothing is sent to
+    Telegram from inside the lock, and a flood of junk produces at most one notice per kind.
+    A message older than the offset this call started with is a redelivery (a second poller
+    read it first): it is skipped so it is never run, billed or answered twice.
     """
     now = now or datetime.now()
     enabled_commands = list(enabled_commands)
     handled = ignored = 0
-    to_run: List[str] = []
+    to_run: List[Union[str, chat.ChatRequest, Notice]] = []
     batch_count = 0
-    stale_skipped = limited = False
+    start_offset = state.offset
+    stale_skipped = limited = chat_limited = chat_busy = unknown_noted = long_noted = False
     for u in updates:
         uid = u.get("update_id") if isinstance(u, dict) else None
         if isinstance(uid, int):
@@ -217,10 +238,36 @@ def process_updates(
                 ignored += 1
                 log.info("무시한 메시지: %s", _describe_message(u, allowed_chat_id))
                 continue
-            name = commands.resolve(u["message"]["text"], enabled_commands)
+            if isinstance(uid, int) and uid < start_offset:
+                log.info("이미 읽은 메시지가 다시 와서 건너뜀")
+                continue
+            text = u["message"]["text"]
+            name = commands.resolve(text, enabled_commands)
+            if name is None and chat_max_per_day > 0 and chat.looks_like_chat(text):
+                if len(text) > chat.MAX_CHAT_LEN:
+                    if not long_noted:
+                        long_noted = True
+                        to_run.append(Notice(chat.TOO_LONG))
+                elif commands.is_stale(u, now.timestamp()):
+                    stale_skipped = True
+                    log.info("오래된 대화 건너뜀")
+                elif batch_count >= commands.MAX_PER_BATCH or state.chats_in_last_hour(now) >= chat.MAX_PER_HOUR:
+                    chat_busy = True
+                    log.info("대화 제한으로 건너뜀")
+                elif state.chat_calls_today(now) >= chat_max_per_day:
+                    chat_limited = True
+                    log.info("하루 대화 한도 도달")
+                else:
+                    batch_count += 1
+                    state.record_chat_call(now)
+                    to_run.append(chat.ChatRequest(text))
+                    handled += 1
+                continue
             if name is None:
                 log.info("알 수 없는 명령 입력")  # never log the text itself
-                _reply(api, token, allowed_chat_id, "모르는 명령이에요. /도움")
+                if not unknown_noted:
+                    unknown_noted = True
+                    to_run.append(Notice("모르는 명령이에요. /도움"))
                 continue
             if commands.is_stale(u, now.timestamp()):
                 stale_skipped = True
@@ -240,9 +287,13 @@ def process_updates(
     if ignored:
         log.info("허용되지 않았거나 해석 불가한 업데이트 %d건 무시", ignored)
     if stale_skipped:
-        _reply(api, token, allowed_chat_id, "늦게 받은 명령은 건너뛰었어요.")
+        to_run.append(Notice("늦게 받은 명령은 건너뛰었어요."))
+    if chat_limited:
+        to_run.append(Notice(chat.OUT_OF_BUDGET))
+    if chat_busy:
+        to_run.append(Notice(chat.CHAT_BUSY))
     if limited:
-        _reply(api, token, allowed_chat_id, f"요청이 많아 일부 명령은 건너뛰었어요 (최대 {commands.MAX_PER_HOUR}개/시간).")
+        to_run.append(Notice(f"요청이 많아 일부 명령은 건너뛰었어요 (최대 {commands.MAX_PER_HOUR}개/시간)."))
     return handled, to_run
 
 
@@ -257,22 +308,40 @@ def poll_once(
     lock, after it is released; the watcher lock is refreshed before each one so a
     slow handler cannot make a second poller think this one died (SECURITY.md 3b).
     """
-    now = now or datetime.now()
+    given_now = now
     path = cfg.resolved_state_path()
     allowed = ("callback_query", "message") if cfg.commands else ("callback_query",)
     updates = api.get_updates(token, State(path).offset, timeout, allowed=allowed)
     if not updates:
         return 0
+    now = given_now or datetime.now()   # taken AFTER the long wait: a message that arrives past midnight is "today"
     with locked(path):
         state = State(path)  # re-read: heartbeat may have written meanwhile
         rule_set = rules_mod.Rules(rules_mod.path_for(path)) if cfg.rules_enabled else None
         handled, to_run = process_updates(
             updates, state, token=token, allowed_chat_id=chat_id, enabled_commands=cfg.commands, now=now, api=api,
-            rule_set=rule_set)
+            rule_set=rule_set, chat_max_per_day=cfg.chat_max_per_day if cfg.chat_enabled else 0)
         if rule_set is not None:
             rule_set.save()   # same lock as the state: one writer at a time
         state.save()
-    for name in to_run:
+    refunds = 0
+    for item in to_run:
         touch_watcher(cfg)
-        _reply(api, token, chat_id, commands.run(name, cfg, now))
+        if isinstance(item, Notice):
+            reply = item.text
+        elif isinstance(item, chat.ChatRequest):
+            reply, refund = chat.answer_full(item, cfg, now, api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+            refunds += 1 if refund else 0
+        else:
+            reply = commands.run(item, cfg, now)
+        _reply(api, token, chat_id, reply)
+    if refunds:   # no answer was generated (no key / network down): the sentence does not use up the day's budget
+        try:
+            with locked(path):
+                state = State(path)
+                for _ in range(refunds):
+                    state.refund_chat_call(now)
+                state.save()
+        except StateLocked:
+            log.info("대화 한도 환불을 건너뜀(상태 파일 사용 중)")
     return handled

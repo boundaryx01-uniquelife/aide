@@ -23,12 +23,16 @@ def labelled(cfg: Config) -> bool:
     return len(cfg.accounts()) > 1
 
 
-def gather_events(cfg: Config, call: Callable[[str], List[Event]], key) -> Tuple[List[Event], List[str], int]:
+def gather_events(cfg: Config, call: Callable[[str], List[Event]], key,
+                  only: str = "") -> Tuple[List[Event], List[str], int]:
     """Run `call(token)` for every account. Returns (events sorted by `key`, failed account names,
     number of accounts). Events are labelled "[name] title" when there are several accounts; an
-    identical event (same day, time and title) in two accounts is merged: "[개인·학교] title"."""
+    identical event (same day, time and title) in two accounts is merged: "[개인·학교] title".
+    `only` (chat questions, stage C1) reads just that account but keeps the labels of the many-account view."""
     accts = cfg.accounts()
     many = len(accts) > 1
+    if only:
+        accts = [a for a in accts if a.name == only]
     entries: List[list] = []   # [event, [account names]] in arrival order
     first_of: dict = {}        # (day, when, title) -> first entry with that key
     failed: List[str] = []

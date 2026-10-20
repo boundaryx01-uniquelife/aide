@@ -36,6 +36,7 @@
 | `src/aide/heartbeat.py` | 박동 1회 오케스트레이션, 조용한 시간, 요약 구성 |
 | `src/aide/inbox.py` | 수신: 3a 버튼 처리 + 3b 명령 허용 검사·속도 제한. 실행은 `commands.py` 에 위임 |
 | `src/aide/commands.py` | 3b 명령 이름 해석과 명령별 조회(`REGISTRY`). `State` 를 받지 않는 읽기 전용 함수들 |
+| `src/aide/chat.py` | C1 문장 → 닫힌 조회 요청 변환·검증과 답장 조립. 모델은 본인 문장만 본다 |
 
 ## 새 검사 추가하는 법
 `checks/` 에 `check(...) -> list[Finding]` 함수를 만들고 `heartbeat.collect()` 에 한 줄 추가한다.
@@ -166,3 +167,26 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 - 버튼 처리는 `cleanup.py`(정규식·흐름), 규칙 저장은 `rules.py`, 적용(`rules.apply`)과 접기·섹션은 `heartbeat.py` 가 맡는다. 미리보기도 규칙을 적용하지만 상태는 바꾸지 않는다.
 - 접힌 메일만 있고 보여 줄 것이 없으면 알림을 보내지 않고 본 것으로도 표시하지 않는다(다음 알림에 실림).
 
+## 대화 C1: 문장으로 묻기 — 구현 완료 2026-10-20, 서버 배포 전
+"그냥 말하면 알아듣는" 첫 단계. **모델은 본인 문장을 조회 요청 하나로 바꾸기만 하고, 메일·일정 같은 외부 글자는 보지 않는다.** 조회와 답장은 `/명령` 과 같은 고정 코드가 한다. 종합 답변(C2: 결과를 읽고 문장으로 답함)은 인젝션 경로가 생기므로 하지 않았다.
+
+```
+문장 ──is_command_message──▶ resolve()가 명령어? ──예──▶ /명령 (모델 없음)
+                              └아니오, "/"로 시작 안 함, chat_enabled
+                                  ▼
+              (잠금 안) 길이·묶음·시간당·하루 예산 확인 → 예산 차감 → ChatRequest
+                                  ▼ (잠금 밖)
+              chat.interpret → Anthropic (문장 + 날짜 + 켜진 조회/계정 이름만)
+                                  ▼
+              chat.parse_query: 닫힌 값 5개를 로컬에서 검증 (하나라도 틀리면 전부 버림)
+                                  ▼
+              chat.run_query → commands.render_{week,due,mail,weather,today,help}
+                                  ▼
+              "▸ 찾아본 것: …"(검증된 값으로 조립) + "※ 고친 점" + 고정 렌더러 결과
+```
+- **`chat.py`**: `ChatRequest`(잠금 밖에서 처리할 문장), `Query`(검증된 조회), `SCHEMA`, `_build_request`, `parse_query`, `interpret`, `run_query`, `answer`(절대 예외를 내보내지 않음). 모델 호출은 `llm._call_api` 를 공유한다(로그·응답 본문 처리 동일).
+- **스키마**: `tool`(일정/마감/메일/날씨/오늘/도움/모름), `start`(YYYY-MM-DD), `days`(1~31), `account`(설정 계정 이름 또는 ""), `keyword`(20자 이하 또는 ""). 검증은 `chat._parse` 가 하며 `Reject(reason)` 으로 사유를 낸다: `invalid`(구조가 틀림, 응답 전체 폐기) / `off`(꺼진 조회) / `range`(일정 시작일이 -62일~+60일 밖). 범위만 벗어난 값(`days`, 모르는 계정, 규칙을 어긴 키워드)은 고쳐서 `Query.notes` 로 알린다. `interpret` 는 `(Query, "")` 또는 `(None, 사유)`(`nokey`/`net`/`invalid`/`off`/`range`)를 돌려주고, `answer_full` 이 사유별 고정 문구와 환불 여부를 정한다.
+- **`commands.py` 확장**: `render_week(first, days, only, keyword)`, `render_due(days, keyword)`, `render_mail(days, only, keyword)`, 새 `render_weather(offset)`, 새 명령 `/날씨`(`weather`). 인자는 모두 선택이라 `/명령` 의 동작은 그대로다. 키워드는 가져온 결과를 로컬에서 거르는 데만 쓴다. `accounts.gather_events(only=...)` 는 한 계정만 읽되 여러 계정 보기의 `[이름]` 표시를 유지한다. `weather.on_day(offset)` 은 오늘부터 6일 뒤까지.
+- **`inbox.py`**: `process_updates(chat_max_per_day=...)` 가 문장을 `ChatRequest` 로 `to_run` 에 넣는다(0 이면 꺼짐). 묶음당 3개는 명령과 공유하고, 시간당(`chat.MAX_PER_HOUR`, `State.chat_times`)과 하루(`State.chat_calls`) 예산은 대화 전용이다. 안내 답장은 `Notice` 로 같은 목록에 담겨 잠금을 푼 뒤 보내지고(종류당 묶음당 1번), 시작 offset 보다 작은 번호의 글자 메시지는 재전달로 보고 건너뛴다. `poll_once` 는 긴 대기가 끝난 **뒤** 시각을 잡고, 잠금 밖에서 `chat.answer_full` 을 호출한 뒤 답이 만들어지지 않은 건(`nokey`/`net`/예외)은 잠금을 다시 잡아 `State.refund_chat_call` 로 환불한다. API 키는 `ANTHROPIC_API_KEY` 환경변수.
+- **설정**: `chat_enabled: false`, `chat_max_per_day: 20`. 켜려면 `llm_enabled` 와 `commands` 가 필요하다(`load_config` 가 검사). `selfcheck` 에 한 줄. `COMMAND_NAMES` 에 `날씨` 추가.
+- **한계**: 날짜 범위 일정은 오늘-62일~+60일, 최대 31일. 메일은 최근 7일까지, 키워드 검색은 최신 안 읽은 20건 안(제목·보낸 사람 표시만, 계정 라벨은 매칭 대상이 아님). 날씨는 오늘부터 6일 뒤까지, 하루씩, 설정된 위치 기준. 마감은 오늘부터 N일(시작일 무시). 일정은 캘린더당 50건에서 잘린다(알림 없음, B2 후보). 일정에는 종료 시각·기간·장소가 없다(B1 후보). 오전/오후는 구분하지 못하고 문장에 그런 말이 있으면 알린다. 대화는 문장 하나씩이며 이전 대화를 기억하지 않는다.

@@ -76,6 +76,7 @@ def main(argv=None) -> int:
         print(f"commands         : {', '.join(cfg.commands) if cfg.commands else '꺼짐'}")
         print(f"llm              : {'켜짐 (' + cfg.llm_model + ')' if cfg.llm_enabled else '꺼짐'}"
               f" / ANTHROPIC_API_KEY {'설정됨' if os.environ.get('ANTHROPIC_API_KEY') else '없음'}")
+        print(f"chat             : {'켜짐 (하루 ' + str(cfg.chat_max_per_day) + '회)' if cfg.chat_enabled else '꺼짐'}")
         print(f"llm_highlights   : {', '.join(cfg.llm_highlights) if cfg.llm_highlights else '꺼짐'}")
         print(f"rules            : {'켜짐' if cfg.rules_enabled else '꺼짐'}"
               f" / 광고·정기 메일 접기 {'켜짐' if cfg.mail_bulk_fold else '꺼짐'}")

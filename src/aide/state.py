@@ -70,6 +70,8 @@ class State:
         self.offset: int = 0
         self.cmd_times: List[float] = []  # stage 3b: timestamps of executed commands, for rate limiting
         self.llm_calls: Dict[str, int] = {}  # stage 2a: date (ISO) -> call count, for the daily budget
+        self.chat_calls: Dict[str, int] = {}  # stage C1: date (ISO) -> chat sentences sent to the LLM
+        self.chat_times: List[float] = []  # stage C1: timestamps of those sentences, for the hourly limit
         self.hidden: Dict[str, Dict[str, int]] = {}  # stage L1: date (ISO) -> {rule_key: count} of mail left out
         self._load()
 
@@ -94,6 +96,8 @@ class State:
             self.offset = int(data.get("offset", 0))
             self.cmd_times = [float(x) for x in data.get("cmd_times", [])]
             self.llm_calls = {str(k): int(v) for k, v in dict(data.get("llm_calls", {})).items()}
+            self.chat_calls = {str(k): int(v) for k, v in dict(data.get("chat_calls", {})).items()}
+            self.chat_times = [float(x) for x in data.get("chat_times", [])]
             self.hidden = {
                 str(d): {str(k): int(n) for k, n in dict(counts).items()}
                 for d, counts in dict(data.get("hidden", {})).items()
@@ -108,6 +112,8 @@ class State:
                 log.warning("상태 파일을 읽을 수 없어 새로 시작합니다.")
             self.seen, self.digests, self.offset, self.cmd_times, self.llm_calls = {}, {}, 0, [], {}
             self.hidden = {}
+            self.chat_calls = {}
+            self.chat_times = []
 
     def is_seen(self, key: str) -> bool:
         return key in self.seen
@@ -170,6 +176,38 @@ class State:
         key = now.date().isoformat()
         self.llm_calls[key] = self.llm_calls.get(key, 0) + 1
 
+    def chat_calls_today(self, now: datetime, days: int = 7) -> int:
+        """Stage C1 budget (its own counter, apart from llm_calls): prune old days, return today's count."""
+        cutoff = now.date() - timedelta(days=days)
+
+        def old(k: str) -> bool:
+            try:
+                return date.fromisoformat(k) < cutoff
+            except ValueError:
+                return True
+
+        for k in [k for k in self.chat_calls if old(k)]:
+            del self.chat_calls[k]
+        return self.chat_calls.get(now.date().isoformat(), 0)
+
+    def record_chat_call(self, now: datetime) -> None:
+        key = now.date().isoformat()
+        self.chat_calls[key] = self.chat_calls.get(key, 0) + 1
+        self.chat_times.append(now.timestamp())
+
+    def refund_chat_call(self, now: datetime) -> None:
+        """Hand back one unit when no model answer was generated (no key, network failure)."""
+        key = now.date().isoformat()
+        if self.chat_calls.get(key, 0) > 0:
+            self.chat_calls[key] -= 1
+        if self.chat_times:
+            self.chat_times.pop()
+
+    def chats_in_last_hour(self, now: datetime, window_seconds: float = 3600.0) -> int:
+        cutoff = now.timestamp() - window_seconds
+        self.chat_times = [t for t in self.chat_times if t >= cutoff]
+        return len(self.chat_times)
+
     def add_hidden(self, rule_key: str, now: datetime) -> None:
         day = self.hidden.setdefault(now.date().isoformat(), {})
         day[rule_key] = day.get(rule_key, 0) + 1
@@ -217,7 +255,8 @@ class State:
         tmp.write_text(
             json.dumps(
                 {"seen": self.seen, "digests": self.digests, "offset": self.offset,
-                 "cmd_times": self.cmd_times, "llm_calls": self.llm_calls, "hidden": self.hidden},
+                 "cmd_times": self.cmd_times, "llm_calls": self.llm_calls, "chat_calls": self.chat_calls, "chat_times": self.chat_times,
+                 "hidden": self.hidden},
                 ensure_ascii=False,
                 indent=1,
                 sort_keys=True,
