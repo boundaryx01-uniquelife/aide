@@ -30,7 +30,7 @@ MAX_ACCOUNTS = 8
 MAX_CALENDARS_PER_ACCOUNT = 8
 # Stage 3b command names. Fixed set on purpose: `commands` in config.json can only
 # pick a subset of these, never introduce a new one.
-COMMAND_NAMES = ("오늘", "일정", "마감", "메일")
+COMMAND_NAMES = ("오늘", "일정", "마감", "메일", "날씨")
 
 
 @dataclass
@@ -89,6 +89,12 @@ class Config:
     rules_enabled: bool = False
     # With rules on: fold bulk/list mail (headers say so) that has no rule into one line.
     mail_bulk_fold: bool = False
+    # Stage C1 (ARCHITECTURE.md "대화 C1"): free-text questions in the bot's private chat. The model
+    # only turns the owner's sentence into ONE closed query (tool + dates + account + keyword) that
+    # the fixed read-only command code then runs. Off by default; needs llm_enabled and commands.
+    # Turning it on is the owner's consent to send the typed sentence (nothing else) to the LLM.
+    chat_enabled: bool = False
+    chat_max_per_day: int = 20   # own daily budget, separate from llm_max_calls_per_day
 
     def resolved_state_path(self) -> Path:
         return _resolve(self.state_path)
@@ -157,12 +163,24 @@ def load_config(path: Optional[Path] = None) -> Config:
     _check_llm(cfg)
     if not isinstance(cfg.rules_enabled, bool) or not isinstance(cfg.mail_bulk_fold, bool):
         raise ConfigError("rules_enabled / mail_bulk_fold 는 true/false 여야 합니다.")
+    _check_chat(cfg)
     if cfg.rules_enabled and cfg.evening_hour is None:
         # The weekly "걸러낸 것" summary in the evening wrap-up is the only place a rule that hides
         # too much shows up, and it cannot be switched off on its own -- so rules need it.
         raise ConfigError("rules_enabled 를 켜려면 evening_hour 도 필요합니다 "
                           "(일요일 저녁 정리의 '걸러낸 것' 요약이 규칙의 안전망입니다).")
     return cfg
+
+
+def _check_chat(cfg: "Config") -> None:
+    if not isinstance(cfg.chat_enabled, bool):
+        raise ConfigError("chat_enabled 는 true/false 여야 합니다.")
+    if (not isinstance(cfg.chat_max_per_day, int) or isinstance(cfg.chat_max_per_day, bool)
+            or not 1 <= cfg.chat_max_per_day <= 200):
+        raise ConfigError("chat_max_per_day 는 1~200 사이의 정수여야 합니다.")
+    if cfg.chat_enabled and not (cfg.llm_enabled and cfg.commands):
+        raise ConfigError("chat_enabled 를 켜려면 llm_enabled 와 commands 도 필요합니다 "
+                          "(대화는 /명령과 같은 읽기 전용 조회만 실행합니다).")
 
 
 def _check_commands(commands) -> None:

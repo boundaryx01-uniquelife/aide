@@ -28,17 +28,27 @@ class Weather:
         return s + (" · 우산 챙기세요" if self.rain_pct >= UMBRELLA_PCT else "")
 
 
+MAX_OFFSET = 6   # Open-Meteo is asked for at most 7 days
+
+
 def today(lat: float, lon: float, get: Callable = netutil.get_json) -> Weather:
+    return on_day(lat, lon, 0, get)
+
+
+def on_day(lat: float, lon: float, offset: int, get: Callable = netutil.get_json) -> Weather:
+    """Forecast for today + `offset` days (0..MAX_OFFSET)."""
+    if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= MAX_OFFSET:
+        raise netutil.NetError("날씨는 오늘부터 7일 이내만 조회할 수 있습니다.")
     q = urlencode({
-        "latitude": lat, "longitude": lon, "timezone": "Asia/Seoul", "forecast_days": 1,
+        "latitude": lat, "longitude": lon, "timezone": "Asia/Seoul", "forecast_days": offset + 1,
         "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code",
     })
     d = get(f"{URL}?{q}").get("daily", {})
     try:
         return Weather(
-            _WMO.get(int(d["weather_code"][0]), "날씨 정보"),
-            round(d["temperature_2m_min"][0]), round(d["temperature_2m_max"][0]),
-            round(d["precipitation_probability_max"][0] or 0),
+            _WMO.get(int(d["weather_code"][offset]), "날씨 정보"),
+            round(d["temperature_2m_min"][offset]), round(d["temperature_2m_max"][offset]),
+            round(d["precipitation_probability_max"][offset] or 0),
         )
     except (KeyError, IndexError, TypeError, ValueError, AttributeError):
         raise netutil.NetError("날씨 응답 형식이 예상과 다릅니다.") from None
