@@ -190,3 +190,11 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 - **`inbox.py`**: `process_updates(chat_max_per_day=...)` 가 문장을 `ChatRequest` 로 `to_run` 에 넣는다(0 이면 꺼짐). 묶음당 3개는 명령과 공유하고, 시간당(`chat.MAX_PER_HOUR`, `State.chat_times`)과 하루(`State.chat_calls`) 예산은 대화 전용이다. 안내 답장은 `Notice` 로 같은 목록에 담겨 잠금을 푼 뒤 보내지고(종류당 묶음당 1번), 시작 offset 보다 작은 번호의 글자 메시지는 재전달로 보고 건너뛴다. `poll_once` 는 긴 대기가 끝난 **뒤** 시각을 잡고, 잠금 밖에서 `chat.answer_full` 을 호출한 뒤 답이 만들어지지 않은 건(`nokey`/`net`/예외)은 잠금을 다시 잡아 `State.refund_chat_call` 로 환불한다. API 키는 `ANTHROPIC_API_KEY` 환경변수.
 - **설정**: `chat_enabled: false`, `chat_max_per_day: 20`. 켜려면 `llm_enabled` 와 `commands` 가 필요하다(`load_config` 가 검사). `selfcheck` 에 한 줄. `COMMAND_NAMES` 에 `날씨` 추가.
 - **한계**: 날짜 범위 일정은 오늘-62일~+60일, 최대 31일. 메일은 최근 7일까지, 키워드 검색은 최신 안 읽은 20건 안(제목·보낸 사람 표시만, 계정 라벨은 매칭 대상이 아님). 날씨는 오늘부터 6일 뒤까지, 하루씩, 설정된 위치 기준. 마감은 오늘부터 N일(시작일 무시). 일정은 캘린더당 50건에서 잘린다(알림 없음, B2 후보). 일정에는 종료 시각·기간·장소가 없다(B1 후보). 오전/오후는 구분하지 못하고 문장에 그런 말이 있으면 알린다. 대화는 문장 하나씩이며 이전 대화를 기억하지 않는다.
+
+## 구글 할 일 — 구현 완료 2026-10-22, 서버 배포 전
+- **`gtasks.py`**: `Task(title, due, list_title, account)`, `fetch(token)`(목록 → 목록별 할 일, 한 목록 실패는 건너뛰고 전부 실패면 예외), `gather(cfg, fetch_fn, only)`(`tasks_accounts` 계정마다 `access_token(need_scope=TASKS_SCOPE)` → 읽기, 한 계정 실패가 다른 계정을 막지 않음, 계정이 둘 이상이면 `[이름]` 표시), `split`/`when_text`/`task_line`/`lines`(표시), `section(cfg, now, kind)`(아침·저녁·일요일 저녁 구역, 끄면 `[]`, 예외 안 냄).
+- **표시**: 아침 `■ 할 일 (오늘까지)`(지남 + 오늘, 날짜 없는 것은 "N개" 한 줄), 저녁 `■ 내일까지 할 일`, 일요일 저녁 `■ 다음 주까지 할 일`. 구글 할 일에는 시각이 없어 마감일은 날짜 부분만 읽는다(시간대 변환 없음). 지난 것은 "지남 10/20".
+- **`/할일`**(별칭 `todo`, `tasks`): `commands.render_tasks(days=7, only, keyword)`. 문장으로 묻기에는 조회 종류 `할일` 이 추가되었다(키워드·일수·계정 사용 가능, 제목은 모델에 가지 않음).
+- **권한**: `google_auth.TASKS_SCOPE`. `login(tasks=True)` 만 이 권한을 더해 요청하고, 허용 여부를 확인해 알려 준다. `token_has_scope()` 로 `selfcheck` 가 "권한 있음/없음"을 보여 준다(토큰 내용은 출력 안 함). 설정 `tasks_accounts`(google_accounts 이름 목록, 기본 `[]` = 꺼짐).
+- 아침·저녁은 `fetch_tasks=` 를 받아 시험에서 가짜로 바꿀 수 있고, 조회는 잠금 밖에서 한다.
+- **한계**: 완료 처리·추가는 못 한다(읽기 전용). 하위 작업은 각자의 마감일로 나온다(부모와 묶어 보여 주지 않음). 반복 할 일은 구글이 만든 다음 항목만 보인다.

@@ -20,7 +20,7 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta
 from typing import Callable, Dict, List, Optional
 
-from . import accounts, gcal, gmail, google_auth, netutil, weather
+from . import accounts, gcal, gmail, google_auth, gtasks, netutil, weather
 from .checks import news_keywords, notice_pages
 from .config import COMMAND_NAMES, Config
 from .models import Finding
@@ -41,6 +41,7 @@ ALIASES = {
     "마감": "마감", "due": "마감",
     "메일": "메일", "mail": "메일",
     "날씨": "날씨", "weather": "날씨",
+    "할일": "할일", "todo": "할일", "tasks": "할일",
     "도움": HELP_NAME, "help": HELP_NAME, "start": HELP_NAME,
 }
 
@@ -222,7 +223,32 @@ def render_weather(cfg: Config, now: datetime, *, fetch=weather.on_day, offset: 
 
 
 CHAT_EXAMPLES = {"일정": "다음 주 화요일 일정 뭐야?", "날씨": "내일 날씨", "메일": "메일 3일치",
-                 "마감": "이번 주 마감 공지", "오늘": "오늘 뭐 있어?"}
+                 "마감": "이번 주 마감 공지", "오늘": "오늘 뭐 있어?", "할일": "이번 주 할 일"}
+
+
+def render_tasks(cfg: Config, now: datetime, *, fetch=gtasks.fetch, days: int = 7, only: str = "",
+                 keyword: str = "") -> str:
+    """Google Tasks: what is overdue or due within `days`, plus how many have no date (or, with a
+    keyword, the undated ones whose title matches)."""
+    if not cfg.task_accounts():
+        return "할 일 기능이 꺼져 있어요."
+    tasks, failed, total = gtasks.gather(cfg, fetch, only)
+    today = now.date()
+    if keyword:
+        tasks = [t for t in tasks if _match(keyword, t.title)]
+    dated, undated = gtasks.split(tasks, today, days)
+    lines = [f"■ 할 일 (지난 것 + {days}일 이내)"]
+    lines += [gtasks.task_line(t, today) for t in dated[:gtasks.MAX_SHOWN]]
+    if len(dated) > gtasks.MAX_SHOWN:
+        lines.append(f"…외 {len(dated) - gtasks.MAX_SHOWN}개")
+    if undated and keyword:
+        lines += [gtasks.task_line(t, today) for t in undated[:gtasks.MAX_SHOWN]]
+    elif undated:
+        lines.append(f"날짜 없는 할 일 {len(undated)}개")
+    if not dated and not undated and not failed:
+        lines.append("없어요.")
+    lines += gtasks.failure_line(failed, total)
+    return "\n".join(lines)
 
 
 def chat_examples(cfg: Config) -> str:
@@ -252,6 +278,7 @@ REGISTRY: Dict[str, Callable[[Config, datetime], str]] = {
     "마감": render_due,
     "메일": render_mail,
     "날씨": render_weather,
+    "할일": render_tasks,
     HELP_NAME: render_help,
 }
 

@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from . import accounts, gcal, llm, netutil, telegram, weather
+from . import accounts, gcal, gtasks, llm, netutil, telegram, weather
 from .checks import git_dirty, yesterday
 from .config import Config
 from .heartbeat import in_quiet_hours
@@ -94,12 +94,14 @@ def highlight_picks(
     return [f"• {candidates[i].when} {candidates[i].title} — {llm.WHY_PHRASES[why]}" for i, why in picks]
 
 
-def _assemble(cfg: Config, now: datetime, weather_result, events, failed, total, highlight_lines=()) -> str:
+def _assemble(cfg: Config, now: datetime, weather_result, events, failed, total, highlight_lines=(),
+              tasks_lines=()) -> str:
     day = (now - timedelta(days=1)).date()
     lines = [f"좋은 아침이에요 · {now:%m/%d}({WEEKDAYS[now.weekday()]})", ""]
     if highlight_lines:
         lines += ["■ 오늘의 핵심 (AI 판단)", *highlight_lines, ""]
     lines += _today_section(cfg, weather_result, events, failed, total)
+    lines += tasks_lines
     if cfg.watch_repos:   # no folders configured (e.g. on the server): leave the section out instead of claiming "no commits"
         lines.append(f"■ 어제({day:%m/%d}) 작업")
         any_work = False
@@ -125,11 +127,13 @@ def _assemble(cfg: Config, now: datetime, weather_result, events, failed, total,
     return "\n".join(lines).rstrip()
 
 
-def build_message(cfg: Config, now: datetime, *, fetch_weather=weather.today, fetch_events=gcal.today_events) -> str:
+def build_message(cfg: Config, now: datetime, *, fetch_weather=weather.today, fetch_events=gcal.today_events,
+                  fetch_tasks=gtasks.fetch) -> str:
     """Preview/dry-run path: gathers and assembles in one call, with NO highlight
     section -- stage 2b, like 2a, never runs on a preview (it is a paid call)."""
     weather_result, events, failed, total = _gather(cfg, now, fetch_weather, fetch_events)
-    return _assemble(cfg, now, weather_result, events, failed, total)
+    return _assemble(cfg, now, weather_result, events, failed, total,
+                     tasks_lines=gtasks.section(cfg, now, kind="morning", fetch_fn=fetch_tasks))
 
 
 def run(
@@ -141,6 +145,7 @@ def run(
     sender: Callable[..., None] = telegram.send,
     fetch_weather=weather.today,
     fetch_events=gcal.today_events,
+    fetch_tasks=gtasks.fetch,
 ) -> int:
     """Exit codes: 0 ok (including 'already sent today' / quiet hours), 1 send failed, 2 setup problem.
 
@@ -163,7 +168,8 @@ def run(
     path = cfg.resolved_state_path()
 
     if not send:
-        print(build_message(cfg, now, fetch_weather=fetch_weather, fetch_events=fetch_events))
+        print(build_message(cfg, now, fetch_weather=fetch_weather, fetch_events=fetch_events,
+                            fetch_tasks=fetch_tasks))
         if State(path).is_seen(key):
             log.info("(오늘 인사는 이미 보냈습니다. --send 는 다시 보내지 않습니다.)")
         return 0
@@ -181,7 +187,8 @@ def run(
         cfg, events, weather_result, now=now, calls_today=State(path).llm_calls_today(now),
         api_key=os.environ.get("ANTHROPIC_API_KEY", ""), call_status=call_status,
     )
-    message = _assemble(cfg, now, weather_result, events, failed, total, highlight_lines)
+    tasks_lines = gtasks.section(cfg, now, kind="morning", fetch_fn=fetch_tasks)   # no lock held, like the other fetches
+    message = _assemble(cfg, now, weather_result, events, failed, total, highlight_lines, tasks_lines)
 
     try:
         with locked(path):

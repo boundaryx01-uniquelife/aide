@@ -84,6 +84,14 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - 알려진 한계(다음 PR 후보 B): 이전 대화를 기억하지 않음(B4, 보안 검토 필요). **B1** 일정에 종료 시각·여러 날 기간·장소 표시와 겹침·빈 시간(영업팀장·학부모 공통, 가장 큰 가치). **B2** 일정 캘린더당 50건 상한과 잘림 안내/서버 검색. **B3** 메일 검색 확장(읽은 메일·발신자·낱말 여러 개, 키워드가 Gmail 질의에 들어가므로 별도 보안 검토). **B5** 주간 날씨·지역 지정·일정+날씨 묶기. **B6** 처리 중 표시, 수정된 메시지·음성 대응, 오전/오후, 별칭. **B7** 할 일(Google Tasks)·알림.
 - 다음 후보: Google Tasks 연동(아침 인사에 "오늘 할 일"), C2 종합 답변(별도 보안 검토), L2/L3.
 
+## 구글 할 일 구현 완료 — 브랜치 feat/google-tasks, PR 전 · 서버 반영 전
+- 내용: `tasks.readonly` 읽기 전용. `foruniquelife` 계정(설정 이름 "개인") 하나만(`tasks_accounts: ["개인"]`). 아침 `■ 할 일 (오늘까지)`(날짜 없는 것은 개수만), 저녁 `■ 내일까지 할 일`/일요일 `■ 다음 주까지 할 일`, `/할일`, 문장 질문의 `할일` 조회. 할 일 제목은 Anthropic 에 안 보냄. 메모·링크는 요청하지 않음. 기본 꺼짐.
+- 사용자 결정(2026-10-22): 위 설계 승인, 계정은 foruniquelife 만, 구글 콘솔 작업(Tasks API 켜기)은 Claude 가 브라우저로 해도 됨, 로그인 "허용" 클릭과 토큰 서버 복사는 사용자.
+- 새 파일: `src/aide/gtasks.py`, `tests/test_gtasks.py`. 바뀐 파일: `google_auth.py`(`TASKS_SCOPE`, `login(tasks=)`, `token_has_scope`, `exchange_code` 가 허용 scope 반환), `config.py`(`tasks_accounts`, `task_accounts()`, `할일` 명령), `commands.py`(`render_tasks`), `chat.py`(`할일` 조회), `morning.py`/`evening.py`(구역·`fetch_tasks`), `__main__.py`(`--tasks`, selfcheck), `config.example.json`, PRIVACY.md(Google Tasks 읽기와 문장 질문의 전송 범위 추가), README/ARCHITECTURE/SECURITY/ROADMAP.
+- 테스트 635개 통과(기존 582 + 신규 53).
+- **남은 일**: ① PR 병합("병합") ② Google Cloud 프로젝트(340195897630)에서 Tasks API 켜기 — Claude 가 브라우저로, 또는 사용자 ③ PC: `python -m aide google-login --account 개인 --tasks` (동의 화면에서 할 일 체크) ④ 서버: `data/google_token_personal.json` 복사 + chown/chmod 600 ⑤ 서버 `config.json` 에 `"tasks_accounts": ["개인"]`, `commands` 에 `"할일"` 추가 → `aide-watch` 재시작 → selfcheck `tasks` 줄 "권한 있음" 확인 → `morning` 미리보기와 텔레그램 `/할일` 확인 ⑥ 켠 날짜를 SECURITY.md 에 기록.
+- 알려진 한계: 읽기 전용. 하위 작업은 각자의 마감일로 나옴. 구글 할 일에는 시각이 없음.
+
 ## 최근 건드린 파일
 - 3b 명령: 위 섹션 참고.
 - 구글 다중 계정: src/aide/accounts.py, config.py, heartbeat.py, morning.py, evening.py, __main__.py, tests/test_accounts.py

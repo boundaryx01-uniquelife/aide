@@ -41,7 +41,7 @@ PART_OF_DAY_RE = re.compile("오전|오후|아침|점심|저녁|새벽|밤")
 FIELDS = ("tool", "start", "days", "account", "keyword")
 
 # Tool names are the command names; "도움" and "모름" are always available.
-TOOLS = ("일정", "마감", "메일", "날씨", "오늘", "도움", "모름")
+TOOLS = ("일정", "마감", "메일", "날씨", "할일", "오늘", "도움", "모름")
 
 SCHEMA = {
     "type": "object",
@@ -58,7 +58,7 @@ SCHEMA = {
 
 SYSTEM = (
     "당신은 사용자의 질문을 조회 요청 하나로 바꾸는 변환기입니다. 직접 답하지 말고, 아래 형식의 JSON 으로만 답하세요.\n"
-    "- tool: 일정(날짜 범위의 일정), 마감(공지 마감), 메일(안 읽은 메일), 날씨, 오늘(오늘 요약), 도움, "
+    "- tool: 일정(날짜 범위의 일정), 마감(공지 마감), 메일(안 읽은 메일), 날씨, 할일(구글 할 일 목록), 오늘(오늘 요약), 도움, "
     "모름(위 어디에도 해당하지 않거나 조회가 아닌 요청: 보내기·삭제·수정·실행 등).\n"
     "- start: 조회를 시작할 날짜 YYYY-MM-DD. 일정·날씨에 쓰고, 나머지는 오늘 날짜를 적으세요.\n"
     "- days: 조회할 일수(1~31). 하루면 1, 이번 주·다음 주는 7, 모르면 7.\n"
@@ -258,13 +258,15 @@ def _echo(q: Query, days: int) -> str:
         bits = [f"오늘부터 {days}일 이내 마감"]
     elif q.tool == "메일":
         bits = [f"최근 {days}일 안 읽은 메일"]
+    elif q.tool == "할일":
+        bits = [f"지난 것과 오늘부터 {days}일 이내 할 일"]
     elif q.tool == "날씨":
         bits = [f"{q.start:%m/%d}({commands.WEEKDAYS[q.start.weekday()]}) 날씨 (설정된 위치 기준)"]
     else:
         bits = ["오늘 요약"]
-    if q.account and q.tool in ("일정", "메일"):
+    if q.account and q.tool in ("일정", "메일", "할일"):
         bits.append(q.account)
-    if q.keyword and q.tool in ("일정", "마감", "메일"):
+    if q.keyword and q.tool in ("일정", "마감", "메일", "할일"):
         bits.append(f"'{clean(q.keyword, 20)}'")
     return "\n".join(["▸ 찾아본 것: " + " · ".join(bits)] + [f"※ {n}" for n in q.notes])
 
@@ -289,6 +291,9 @@ def run_query(q: Query, cfg: Config, now: datetime) -> str:
             return _with_echo(_echo(q, q.days), _hint(q, body))
         if q.tool == "마감":
             body = commands.render_due(cfg, now, days=q.days, keyword=q.keyword)
+            return _with_echo(_echo(q, q.days), _hint(q, body))
+        if q.tool == "할일":
+            body = commands.render_tasks(cfg, now, days=q.days, only=q.account, keyword=q.keyword)
             return _with_echo(_echo(q, q.days), _hint(q, body))
         days = min(q.days, MAX_MAIL_DAYS)
         return _with_echo(_echo(q, days), commands.render_mail(cfg, now, days=days, only=q.account, keyword=q.keyword))

@@ -81,6 +81,19 @@ python -m unittest discover -s tests -v
 - `/` 로 시작하는 글은 항상 명령으로만 처리됩니다. `chat_enabled` 를 끄면 문장은 "모르는 명령이에요" 로 답합니다.
 - 자세한 설계·보안 검토는 `ARCHITECTURE.md` 의 "대화 C1", `SECURITY.md` 의 "대화 C1".
 
+## 구글 할 일 (읽기 전용)
+`config.json` 의 `"tasks_accounts": ["개인"]` 에 적은 계정의 구글 할 일을 읽습니다(기본 꺼짐, 비어 있으면 아무것도 읽지 않음). 메모는 읽지 않고, 완료 처리나 추가는 못 합니다.
+
+1. 구글 Cloud 프로젝트에서 **Google Tasks API** 를 켭니다.
+2. PC 에서 `python -m aide google-login --account 개인 --tasks` 를 실행하고, 동의 화면에서 **할 일 권한까지 체크**한 뒤 허용합니다. 끝나면 "할 일 권한이 허용되지 않았어요" 대신 "(캘린더, Gmail, 할 일)" 이 나와야 합니다.
+3. 만들어진 토큰 파일(`data/google_token_personal.json`)을 서버로 복사하고 `chown aide:aide`, `chmod 600` 을 합니다.
+4. 서버 `config.json` 에 `"tasks_accounts": ["개인"]` 을 넣고 `commands` 에 `"할일"` 을 더한 뒤 `aide-watch` 를 재시작합니다. `python -m aide selfcheck` 의 `tasks` 줄이 "권한 있음" 이어야 합니다.
+
+- 아침 인사 `■ 할 일 (오늘까지)`(지난 것·오늘 것, 날짜 없는 것은 개수만), 저녁 정리 `■ 내일까지 할 일`(일요일은 `■ 다음 주까지 할 일`).
+- `/할일`(또는 `todo`): 지난 것과 7일 이내 할 일, 날짜 없는 할 일 개수. 문장으로도 됩니다: `이번 주 할 일`, `보고서 할 일 언제까지야?`.
+- 할 일 제목은 텔레그램 본인 채팅으로만 가고, AI(Anthropic)에는 보내지 않습니다.
+- 자세한 설계·보안 검토는 `ARCHITECTURE.md` 의 "구글 할 일", `SECURITY.md` 의 "구글 할 일".
+
 ## LLM 중요도 판단 (2a)
 `config.json` 에 `"llm_enabled": true` 를 넣고 `.env` 에 `ANTHROPIC_API_KEY` 를 넣으면, 30분 점검 때마다 새 메일·공지·뉴스 항목의 중요도(높음/보통/낮음)를 LLM 이 매겨 **순서만** 바꿔 줍니다(기본 꺼짐).
 - 높음은 "■ 중요 (AI 판단)" 섹션으로 맨 위에, 낮음은 각 섹션 맨 아래로. 항목을 숨기거나 더하지 않으며, 표시되는 글자는 항상 원래 데이터입니다.

@@ -22,6 +22,7 @@ from . import netutil
 
 CAL_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+TASKS_SCOPE = "https://www.googleapis.com/auth/tasks.readonly"   # asked for only with `google-login --tasks`
 SCOPE = f"{CAL_SCOPE} {GMAIL_SCOPE}"  # both READ-ONLY
 AUTH_HOST, TOKEN_HOST = "accounts.google.com", "oauth2.googleapis.com"
 LOGIN_TIMEOUT = 180
@@ -63,10 +64,10 @@ def _pkce() -> tuple:
     return verifier, challenge
 
 
-def build_auth_url(client: Dict[str, str], redirect_uri: str, state: str, challenge: str) -> str:
+def build_auth_url(client: Dict[str, str], redirect_uri: str, state: str, challenge: str, scope: str = SCOPE) -> str:
     q = {
         "client_id": client["client_id"], "redirect_uri": redirect_uri, "response_type": "code",
-        "scope": SCOPE, "state": state, "code_challenge": challenge, "code_challenge_method": "S256",
+        "scope": scope, "state": state, "code_challenge": challenge, "code_challenge_method": "S256",
         "access_type": "offline", "prompt": "consent",
     }
     return f"{client['auth_uri']}?{urlencode(q)}"
@@ -105,7 +106,8 @@ def _token_request(client, form, post):
         raise GoogleAuthError(f"Google 연결 실패: {e}") from None
 
 
-def exchange_code(client, code, redirect_uri, verifier, token_path, post=netutil.post_form, now=time.time) -> None:
+def exchange_code(client, code, redirect_uri, verifier, token_path, post=netutil.post_form, now=time.time) -> str:
+    """Save the tokens; returns the scope string Google actually granted (the user can untick boxes)."""
     form = {
         "client_id": client["client_id"], "client_secret": client["client_secret"], "code": code,
         "code_verifier": verifier, "redirect_uri": redirect_uri, "grant_type": "authorization_code",
@@ -118,6 +120,16 @@ def exchange_code(client, code, redirect_uri, verifier, token_path, post=netutil
         "scope": str(r.get("scope", "")),
         "expires_at": now() + int(r.get("expires_in", 3600)),
     })
+    return str(r.get("scope", ""))
+
+
+def token_has_scope(token_path, scope: str) -> bool:
+    """Whether the saved login includes `scope`. Reads the file but reveals nothing from it."""
+    try:
+        tok = json.loads(Path(token_path).read_text(encoding="utf-8"))
+        return scope in str(tok.get("scope", "")).split()
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -146,15 +158,17 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
-def login(client_path, token_path, open_browser=webbrowser.open, post=netutil.post_form, say=print) -> None:
+def login(client_path, token_path, open_browser=webbrowser.open, post=netutil.post_form, say=print,
+          tasks: bool = False) -> None:
     client = load_client(client_path)
+    scope = f"{SCOPE} {TASKS_SCOPE}" if tasks else SCOPE
     state = secrets.token_urlsafe(24)
     verifier, challenge = _pkce()
     handler = type("H", (_Handler,), {"result": None, "error": None, "expected_state": state})
     server = HTTPServer(("127.0.0.1", 0), handler)
     server.timeout = 1
     redirect = f"http://127.0.0.1:{server.server_port}"
-    url = build_auth_url(client, redirect, state, challenge)
+    url = build_auth_url(client, redirect, state, challenge, scope)
     say("브라우저에서 Google 로그인 창이 열립니다. 열리지 않으면 아래 주소를 복사해 여세요:")
     say(url)
     def _open():
@@ -174,8 +188,13 @@ def login(client_path, token_path, open_browser=webbrowser.open, post=netutil.po
         raise GoogleAuthError(handler.error)
     if handler.result is None:
         raise GoogleAuthError("시간 초과: 로그인이 완료되지 않았습니다.")
-    exchange_code(client, handler.result, redirect, verifier, token_path, post=post)
-    say("로그인 완료. 읽기 전용 권한(캘린더, Gmail)만 저장되었습니다.")
+    granted = exchange_code(client, handler.result, redirect, verifier, token_path, post=post)
+    if not tasks:
+        say("로그인 완료. 읽기 전용 권한(캘린더, Gmail)만 저장되었습니다.")
+    elif TASKS_SCOPE in granted.split():
+        say("로그인 완료. 읽기 전용 권한(캘린더, Gmail, 할 일)만 저장되었습니다.")
+    else:
+        say("로그인은 됐지만 '할 일' 권한이 허용되지 않았어요. 다시 실행해서 모든 항목에 체크해 주세요.")
 
 
 def access_token(client_path, token_path, post=netutil.post_form, now=time.time, need_scope: str = CAL_SCOPE) -> str:
