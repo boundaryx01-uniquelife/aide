@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from . import accounts, gcal, llm, netutil, rules as rules_mod, telegram
+from . import accounts, gcal, gtasks, llm, netutil, rules as rules_mod, telegram
 from .checks import git_dirty, news_keywords, notice_pages, yesterday
 from .config import Config
 from .heartbeat import in_quiet_hours
@@ -143,13 +143,15 @@ def hidden_lines(cfg: Config, now: datetime) -> List[str]:
     return out
 
 
-def _assemble(cfg: Config, now: datetime, events, failed, total, rows, highlight_lines=(), hidden=()) -> str:
+def _assemble(cfg: Config, now: datetime, events, failed, total, rows, highlight_lines=(), hidden=(),
+              tasks_lines=()) -> str:
     lines = [f"저녁 정리 · {now:%m/%d}({WEEKDAYS[now.weekday()]})", ""]
     if highlight_lines:
         header = "이번 주 핵심" if _is_weekly(now) else "내일의 핵심"
         lines += [f"■ {header} (AI 판단)", *highlight_lines, ""]
     lines += _calendar_section(cfg, now, events, failed, total)
     lines += _deadline_section(cfg, now, rows)
+    lines += tasks_lines
 
     if cfg.watch_repos:   # no folders configured (e.g. on the server): leave the section out
         lines.append("■ 오늘 작업")
@@ -178,17 +180,22 @@ def _assemble(cfg: Config, now: datetime, events, failed, total, rows, highlight
     return "\n".join(lines).rstrip()
 
 
+def _tasks_lines(cfg: Config, now: datetime, fetch_tasks) -> List[str]:
+    return gtasks.section(cfg, now, kind="weekly" if _is_weekly(now) else "evening", fetch_fn=fetch_tasks)
+
+
 def build_message(cfg: Config, now: datetime, *, fetch_events=gcal.today_events,
-                  fetch=news_keywords.fetch_feed, fetch_week=gcal.events_between) -> str:
+                  fetch=news_keywords.fetch_feed, fetch_week=gcal.events_between, fetch_tasks=gtasks.fetch) -> str:
     """Preview/dry-run path: gathers and assembles in one call, with NO highlight
     section -- stage 2b, like 2a, never runs on a preview (it is a paid call)."""
     events, failed, total, rows = _gather(cfg, now, fetch_events, fetch_week, fetch)
-    return _assemble(cfg, now, events, failed, total, rows, hidden=hidden_lines(cfg, now))
+    return _assemble(cfg, now, events, failed, total, rows, hidden=hidden_lines(cfg, now),
+                     tasks_lines=_tasks_lines(cfg, now, fetch_tasks))
 
 
 def run(cfg: Config, *, send: bool = False, force: bool = False, now: Optional[datetime] = None,
         sender: Callable[..., None] = telegram.send, fetch=news_keywords.fetch_feed,
-        fetch_events=gcal.today_events, fetch_week=gcal.events_between) -> int:
+        fetch_events=gcal.today_events, fetch_week=gcal.events_between, fetch_tasks=gtasks.fetch) -> int:
     """Exit codes: 0 ok (including 'not time yet' / 'already sent'), 1 send failed, 2 setup problem.
 
     Dry run (default) prints the message and changes nothing. With --send the day is
@@ -212,7 +219,8 @@ def run(cfg: Config, *, send: bool = False, force: bool = False, now: Optional[d
     path = cfg.resolved_state_path()
 
     if not send:
-        print(build_message(cfg, now, fetch_events=fetch_events, fetch=fetch, fetch_week=fetch_week))
+        print(build_message(cfg, now, fetch_events=fetch_events, fetch=fetch, fetch_week=fetch_week,
+                            fetch_tasks=fetch_tasks))
         return 0
     if not force:
         if now.hour < (cfg.evening_hour or 0):
@@ -230,7 +238,8 @@ def run(cfg: Config, *, send: bool = False, force: bool = False, now: Optional[d
         api_key=os.environ.get("ANTHROPIC_API_KEY", ""), call_status=call_status,
     )
     hidden = hidden_lines(cfg, now)
-    message = _assemble(cfg, now, events, failed, total, rows, highlight_lines, hidden)
+    tasks_lines = _tasks_lines(cfg, now, fetch_tasks)   # no lock held, like the other fetches
+    message = _assemble(cfg, now, events, failed, total, rows, highlight_lines, hidden, tasks_lines)
     extra = {"buttons": [[("📋 규칙 목록", "r:list")]]} if hidden else {}
 
     try:

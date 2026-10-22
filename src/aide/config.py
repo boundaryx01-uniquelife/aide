@@ -30,7 +30,7 @@ MAX_ACCOUNTS = 8
 MAX_CALENDARS_PER_ACCOUNT = 8
 # Stage 3b command names. Fixed set on purpose: `commands` in config.json can only
 # pick a subset of these, never introduce a new one.
-COMMAND_NAMES = ("오늘", "일정", "마감", "메일", "날씨")
+COMMAND_NAMES = ("오늘", "일정", "마감", "메일", "날씨", "할일")
 
 
 @dataclass
@@ -95,6 +95,9 @@ class Config:
     # Turning it on is the owner's consent to send the typed sentence (nothing else) to the LLM.
     chat_enabled: bool = False
     chat_max_per_day: int = 20   # own daily budget, separate from llm_max_calls_per_day
+    # Google Tasks (read-only, tasks.readonly): names from google_accounts whose task lists are read.
+    # Empty = off. Only these accounts need the extra permission (`google-login --tasks`).
+    tasks_accounts: List[str] = field(default_factory=list)
 
     def resolved_state_path(self) -> Path:
         return _resolve(self.state_path)
@@ -104,6 +107,14 @@ class Config:
 
     def resolved_google_token(self) -> Path:
         return _resolve(self.google_token_path)
+
+    def task_accounts(self) -> List[Account]:
+        """The accounts whose Google Tasks are read ([] = off). With one unnamed account any entry turns it on."""
+        if not self.tasks_accounts:
+            return []
+        if not self.google_accounts:
+            return self.accounts()
+        return [a for a in self.accounts() if a.name in self.tasks_accounts]
 
     def accounts(self) -> List[Account]:
         if not self.google_accounts:
@@ -164,6 +175,7 @@ def load_config(path: Optional[Path] = None) -> Config:
     if not isinstance(cfg.rules_enabled, bool) or not isinstance(cfg.mail_bulk_fold, bool):
         raise ConfigError("rules_enabled / mail_bulk_fold 는 true/false 여야 합니다.")
     _check_chat(cfg)
+    _check_tasks(cfg)
     if cfg.rules_enabled and cfg.evening_hour is None:
         # The weekly "걸러낸 것" summary in the evening wrap-up is the only place a rule that hides
         # too much shows up, and it cannot be switched off on its own -- so rules need it.
@@ -181,6 +193,19 @@ def _check_chat(cfg: "Config") -> None:
     if cfg.chat_enabled and not (cfg.llm_enabled and cfg.commands):
         raise ConfigError("chat_enabled 를 켜려면 llm_enabled 와 commands 도 필요합니다 "
                           "(대화는 /명령과 같은 읽기 전용 조회만 실행합니다).")
+
+
+def _check_tasks(cfg: "Config") -> None:
+    t = cfg.tasks_accounts
+    if not isinstance(t, list) or any(not isinstance(n, str) or not n.strip() for n in t) or len(set(t)) != len(t):
+        raise ConfigError("tasks_accounts 는 서로 다른 계정 이름의 목록이어야 합니다.")
+    names = {a["name"] for a in cfg.google_accounts}
+    if cfg.google_accounts:
+        unknown = sorted(set(t) - names)
+        if unknown:
+            raise ConfigError(f"tasks_accounts 에 google_accounts 에 없는 이름이 있습니다: {unknown}")
+    elif len(t) > 1:
+        raise ConfigError("계정이 하나뿐일 때 tasks_accounts 는 항목 하나만 쓸 수 있습니다.")
 
 
 def _check_commands(commands) -> None:

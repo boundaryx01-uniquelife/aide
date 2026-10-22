@@ -10,20 +10,21 @@ Google 로그인 때 아래 **읽기 전용** 권한만 요청합니다.
 |---|---|---|
 | Google Calendar (`calendar.readonly`) | 일정의 제목, 날짜·시각 | 일정 수정·삭제, 참석자 정보 |
 | Gmail (`gmail.readonly`) | 메일의 **보낸 사람과 제목**, 광고·정기 메일 표시 헤더의 유무 | 메일 본문, 첨부 파일. 메일을 읽음 처리·삭제·전송하지 않음 |
+| Google Tasks (`tasks.readonly`, 소유자가 고른 계정만) | 할 일의 **제목, 마감 날짜, 완료 여부** | 할 일의 메모·링크. 할 일을 만들거나 고치거나 완료 처리하지 않음 |
 
 ## 어디에 쓰나
-- 읽은 일정·메일 제목을 소유자 본인의 텔레그램 채팅으로 보내는 알림(아침 인사, 메일 요약, 저녁 정리)을 만드는 데에만 씁니다.
+- 읽은 일정·메일 제목·할 일 제목을 소유자 본인의 텔레그램 채팅으로 보내는 알림(아침 인사, 메일 요약, 저녁 정리)과, 소유자가 텔레그램에서 물어볼 때의 답을 만드는 데에만 씁니다.
 - 광고·판매·프로파일링에 쓰지 않습니다.
 
 ## 어디에 저장하나
 - 로그인 토큰과 알림 기록(이미 알린 항목, 사용자가 정한 발신자 규칙)은 **소유자가 직접 관리하는 서버의 파일**에만 저장합니다. 파일은 서버 전용 계정만 읽을 수 있게 하고 깃 저장소에는 올리지 않습니다.
-- 메일 본문은 저장하지 않습니다.
+- 메일 본문은 저장하지 않습니다. 할 일의 내용도 저장하지 않고, 요청할 때마다 읽기만 합니다.
 
 ## 누구에게 전달되나
 Google 에서 읽은 정보는 아래 외에는 누구에게도 팔거나 공유하지 않습니다.
 
 1. **텔레그램**: 알림 문구가 소유자 본인의 텔레그램 채팅으로 전달됩니다.
-2. **LLM 서비스(선택 기능)**: 소유자가 직접 켠 경우에만, 알림의 중요도를 고르기 위해 메일 보낸 사람·제목, 공지·일정 제목이 Anthropic API 로 전달됩니다. 이 기능은 기본이 꺼져 있고, 계정별로 제외할 수 있습니다. 해당 서비스의 약관이 적용됩니다.
+2. **LLM 서비스(선택 기능)**: 소유자가 직접 켠 경우에만 Anthropic API 로 전달됩니다. (가) 알림의 중요도·핵심을 고르기 위해 메일 보낸 사람·제목, 공지·일정 제목이 전달됩니다(계정별로 제외 가능). (나) 소유자가 텔레그램에 문장으로 물어보는 기능에서는 **소유자가 쓴 문장만** 전달되며 메일·일정·할 일 내용은 전달되지 않습니다. **할 일 제목은 어떤 경우에도 LLM 서비스로 보내지 않습니다.** 이 기능들은 기본이 꺼져 있고, 해당 서비스의 약관이 적용됩니다.
 3. **Open-Meteo**: 날씨 조회를 위해 대략의 지역 좌표가 전달됩니다(개인 식별 정보 없음).
 
 ## 삭제와 권한 해제
@@ -39,6 +40,7 @@ Google 에서 읽은 정보는 아래 외에는 누구에게도 팔거나 공유
 aide is a personal assistant that one individual (the repository owner) runs for their own use; it is not distributed or offered as a service.
 It requests read-only access to Google Calendar (event titles and times) and Gmail (message sender and subject headers only — never message bodies or attachments)
 solely to build notifications that are sent to the owner's own Telegram chat. Tokens and notification records are stored only on the owner's own server.
-Google user data is not sold, used for advertising, or shared, except: (1) the owner's own Telegram chat, (2) an optional, off-by-default feature that sends
-sender/subject/event titles to the Anthropic API when the owner explicitly enables it, and (3) coarse location coordinates to Open-Meteo for weather.
+Google user data is not sold, used for advertising, or shared, except: (1) the owner's own Telegram chat, (2) optional, off-by-default features that send
+sender/subject/event titles (importance ranking) or the owner's own typed question (free-text queries; no Google data) to the Anthropic API when the owner explicitly enables them, and (3) coarse location coordinates to Open-Meteo for weather.
+For selected accounts only, it can also read Google Tasks (titles, due dates and completion state — never notes; read-only) to include them in the owner's own notifications; task titles are never sent to any LLM service.
 Access can be revoked at any time at https://myaccount.google.com/connections.

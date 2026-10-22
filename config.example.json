@@ -39,5 +39,6 @@
   "rules_enabled": false,
   "mail_bulk_fold": false,
   "chat_enabled": false,
-  "chat_max_per_day": 20
+  "chat_max_per_day": 20,
+  "tasks_accounts": []
 }
