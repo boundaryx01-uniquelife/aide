@@ -182,7 +182,14 @@ class FormatTests(unittest.TestCase):
     def test_lines_section(self):
         ts = [gtasks.Task("보고서", date(2026, 10, 20)), gtasks.Task("장보기", TODAY), gtasks.Task("메모", None)]
         out = gtasks.lines(ts, [], 1, TODAY, 0, title="할 일 (오늘까지)", show_undated=True)
-        self.assertEqual(out, ["■ 할 일 (오늘까지)", "• 지남 10/20 보고서", "• 오늘 장보기", "날짜 없는 할 일 1개", ""])
+        self.assertEqual(out, ["■ 할 일 (오늘까지)", "• 지남 10/20 보고서", "• 오늘 장보기", "• 메모", ""])
+
+    def test_undated_shows_the_top_one_and_counts_the_rest(self):
+        ts = [gtasks.Task("첫째", None), gtasks.Task("둘째", None), gtasks.Task("셋째", None)]
+        out = gtasks.lines(ts, [], 1, TODAY, 0, title="x", show_undated=True)
+        self.assertEqual(out, ["■ x", "• 첫째", "…날짜 없는 할 일 외 2개", ""])
+        one = gtasks.lines(ts[:1], [], 1, TODAY, 0, title="x", show_undated=True)
+        self.assertEqual(one, ["■ x", "• 첫째", ""])
 
     def test_nothing_to_say_is_no_section(self):
         self.assertEqual(gtasks.lines([], [], 1, TODAY, 0, title="x", show_undated=True), [])
@@ -218,7 +225,7 @@ class FormatTests(unittest.TestCase):
             eve = gtasks.section(make_cfg(), NOW, kind="evening", fetch_fn=lambda t: ts)
             week = gtasks.section(make_cfg(), SUNDAY, kind="weekly", fetch_fn=lambda t: ts)
         self.assertEqual(morn[0], "■ 할 일 (오늘까지)")
-        self.assertIn("날짜 없는 할 일 1개", morn)
+        self.assertIn("• 메모", morn)
         self.assertNotIn("• 내일 내일것", morn)
         self.assertEqual(eve[0], "■ 내일까지 할 일")
         self.assertIn("• 내일 내일것", eve)
@@ -295,7 +302,9 @@ class CommandTests(unittest.TestCase):
         self.assertIn("• 지남 10/21 보고서 제출", out)
         self.assertIn("• 10/24(토) 장보기", out)
         self.assertNotIn("한참 뒤", out)
-        self.assertIn("날짜 없는 할 일 2개", out)
+        self.assertIn("• 보고서 메모", out)
+        self.assertIn("…날짜 없는 할 일 외 1개", out)
+        self.assertNotIn("날짜 없는 할 일 2개", out)
 
     def test_keyword_filters_and_lists_matching_undated_titles(self):
         out = self.render(keyword="보고서")

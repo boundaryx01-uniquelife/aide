@@ -143,7 +143,9 @@ def lines(tasks: List[Task], failed: List[str], total: int, today: date, days: i
     if len(dated) > MAX_SHOWN:
         out.append(f"…외 {len(dated) - MAX_SHOWN}개")
     if show_undated and undated:
-        out.append(f"날짜 없는 할 일 {len(undated)}개")
+        out.append(task_line(undated[0], today))
+        if len(undated) > 1:
+            out.append(f"…날짜 없는 할 일 외 {len(undated) - 1}개")
     out += failure_line(failed, total)
     return [f"■ {title}", *out, ""] if out else []
 
