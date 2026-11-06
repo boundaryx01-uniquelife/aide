@@ -98,6 +98,13 @@ class Config:
     # Google Tasks (read-only, tasks.readonly): names from google_accounts whose task lists are read.
     # Empty = off. Only these accounts need the extra permission (`google-login --tasks`).
     tasks_accounts: List[str] = field(default_factory=list)
+    # General news (news_feeds) only at these hours (e.g. [7, 12]); [] = at every check, as before.
+    news_hours: List[int] = field(default_factory=list)
+    # Intraday market headlines (checks/market_news.py): Google News searches, e.g. ["특징주", "상한가"].
+    # [] = off. Checked every heartbeat on weekdays 09:00-16:00, one line per stock per day.
+    market_queries: List[str] = field(default_factory=list)
+    market_exclude: List[str] = field(default_factory=lambda: ["리딩방", "무료 추천", "카톡방", "수익 보장"])
+    market_max_age_hours: int = 3
 
     def resolved_state_path(self) -> Path:
         return _resolve(self.state_path)
@@ -176,6 +183,7 @@ def load_config(path: Optional[Path] = None) -> Config:
         raise ConfigError("rules_enabled / mail_bulk_fold 는 true/false 여야 합니다.")
     _check_chat(cfg)
     _check_tasks(cfg)
+    _check_news(cfg)
     if cfg.rules_enabled and cfg.evening_hour is None:
         # The weekly "걸러낸 것" summary in the evening wrap-up is the only place a rule that hides
         # too much shows up, and it cannot be switched off on its own -- so rules need it.
@@ -193,6 +201,21 @@ def _check_chat(cfg: "Config") -> None:
     if cfg.chat_enabled and not (cfg.llm_enabled and cfg.commands):
         raise ConfigError("chat_enabled 를 켜려면 llm_enabled 와 commands 도 필요합니다 "
                           "(대화는 /명령과 같은 읽기 전용 조회만 실행합니다).")
+
+
+def _check_news(cfg: "Config") -> None:
+    h = cfg.news_hours
+    if (not isinstance(h, list) or len(set(h)) != len(h)
+            or any(not isinstance(x, int) or isinstance(x, bool) or not 0 <= x <= 23 for x in h)):
+        raise ConfigError("news_hours 는 서로 다른 0~23 사이 정수 목록이어야 합니다 (예: [7, 12]).")
+    for name in ("market_queries", "market_exclude"):
+        v = getattr(cfg, name)
+        if (not isinstance(v, list) or len(v) > 10
+                or any(not isinstance(x, str) or not x.strip() or len(x) > 30 or "\n" in x for x in v)):
+            raise ConfigError(f"{name} 는 30자 이하 낱말의 목록(최대 10개)이어야 합니다.")
+    a = cfg.market_max_age_hours
+    if not isinstance(a, int) or isinstance(a, bool) or not 1 <= a <= 24:
+        raise ConfigError("market_max_age_hours 는 1~24 사이의 정수여야 합니다.")
 
 
 def _check_tasks(cfg: "Config") -> None:

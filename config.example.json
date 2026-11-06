@@ -40,5 +40,9 @@
   "mail_bulk_fold": false,
   "chat_enabled": false,
   "chat_max_per_day": 20,
-  "tasks_accounts": []
+  "tasks_accounts": [],
+  "news_hours": [],
+  "market_queries": [],
+  "market_exclude": ["리딩방", "무료 추천", "카톡방", "수익 보장"],
+  "market_max_age_hours": 3
 }

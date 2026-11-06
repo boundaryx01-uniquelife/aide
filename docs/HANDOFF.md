@@ -112,6 +112,13 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - **남은 일**: ① PR 병합("병합") ② Google Cloud 프로젝트(340195897630)에서 Tasks API 켜기 — Claude 가 브라우저로, 또는 사용자 ③ PC: `python -m aide google-login --account 개인 --tasks` (동의 화면에서 할 일 체크) ④ 서버: `data/google_token_personal.json` 복사 + chown/chmod 600 ⑤ 서버 `config.json` 에 `"tasks_accounts": ["개인"]`, `commands` 에 `"할일"` 추가 → `aide-watch` 재시작 → selfcheck `tasks` 줄 "권한 있음" 확인 → `morning` 미리보기와 텔레그램 `/할일` 확인 ⑥ 켠 날짜를 SECURITY.md 에 기록.
 - 알려진 한계: 읽기 전용. 하위 작업은 각자의 마감일로 나옴. 구글 할 일에는 시각이 없음.
 
+## 장중 특징주·뉴스 시각 구현 완료 — 브랜치 feat/market-news, PR 전 · 서버 설정 전
+- 내용: `news_hours`(일반 뉴스 시각), `market_queries`(구글 뉴스 검색어, 평일 09:00~16:00 30분마다 새 기사만, 종목별 한 줄·기사 N건, 하루 한 번), `market_exclude`, `market_max_age_hours`. 모두 기본 꺼짐/기존 동작. LLM 미사용. 사용자 결정(2026-11-06): 키워드는 특징주·상한가·거래량 급증·테마주·장중 시황 계열, 시세 순위는 stock-signal 몫, aide 는 관련 뉴스 헤드라인만, 일반 뉴스 7·12시, 메일은 하루 2번(서버 설정만: `mail_senders: []`, `mail_recent_hours: [8, 18]`).
+- 새 파일: `src/aide/checks/market_news.py`, `tests/test_market_news.py`. 바뀐 파일: `heartbeat.py`(collect 시각 제한·market 섹션), `config.py`, `checks/news_keywords.py`(`strip_source`), `__main__.py`(selfcheck), 문서, `config.example.json`.
+- 실제 구글 뉴스로 시험: 5개 검색어로 24시간 기준 104건이 나오고 종목 묶음이 동작함(미국 종목 기사는 이름 부분이 길게 잡힐 수 있음).
+- **서버 적용**: 병합 → `fetch`+`merge --ff-only` → `config.json` 에 `"news_hours": [7, 12]`, `"market_queries": ["특징주", "상한가", "거래량 급증", "테마주", "장중 시황"]` 추가(메일은 `"mail_senders": []`, `"mail_recent_hours": [8, 18]`) → `aide-watch` 재시작 → selfcheck 의 `news`·`market` 줄 확인 → 평일 장중 알림 확인.
+- 알려진 한계: 구글 뉴스 RSS 지연(수십 분), 공휴일 미구분, 종목 이름은 `[특징주] 이름, …` 모양일 때만 뽑음.
+
 ## 최근 건드린 파일
 - 3b 명령: 위 섹션 참고.
 - 구글 다중 계정: src/aide/accounts.py, config.py, heartbeat.py, morning.py, evening.py, __main__.py, tests/test_accounts.py

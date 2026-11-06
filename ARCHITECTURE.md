@@ -38,6 +38,10 @@
 | `src/aide/commands.py` | 3b 명령 이름 해석과 명령별 조회(`REGISTRY`). `State` 를 받지 않는 읽기 전용 함수들 |
 | `src/aide/chat.py` | C1 문장 → 닫힌 조회 요청 변환·검증과 답장 조립. 모델은 본인 문장만 본다 |
 
+## 장중 특징주와 뉴스 시각
+- `checks/market_news.py`: `market_queries` 낱말마다 구글 뉴스 검색 RSS(`when:1d`)를 읽고, 제목·요약에 그 낱말이 있고 `market_exclude` 낱말이 없고 `market_max_age_hours` 이내인 기사만 남긴다. `[특징주] 종목, …` 모양의 제목은 종목 이름으로, 그 밖은 정규화한 제목으로 묶어 한 줄(`Finding(source="market")`)로 만든다. 키는 `market:<날짜>:<묶음>` 이라 한 종목은 하루 한 번만 알린다.
+- `heartbeat.collect()`: 일반 뉴스는 `news_hours` 에 현재 시(時)가 있을 때만(비면 매번), 장중 줄은 평일 09:00~16:00 에만 모은다. 드라이런(`preview=True`)은 두 제한을 무시한다. `format_digest` 는 `market` 섹션을 맨 위에 둔다. `llm_sources` 에 `market` 이 없으므로 LLM 에는 가지 않는다.
+
 ## 새 검사 추가하는 법
 `checks/` 에 `check(...) -> list[Finding]` 함수를 만들고 `heartbeat.collect()` 에 한 줄 추가한다.
 `Finding.key` 는 "같은 일이면 같은 값"이어야 중복 방지가 된다. (예: 기사 id, `폴더:날짜`)
