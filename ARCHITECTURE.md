@@ -193,7 +193,7 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 
 ## 구글 할 일 — 구현 완료 2026-10-22, 서버 배포 전
 - **`gtasks.py`**: `Task(title, due, list_title, account)`, `fetch(token)`(목록 → 목록별 할 일, 한 목록 실패는 건너뛰고 전부 실패면 예외), `gather(cfg, fetch_fn, only)`(`tasks_accounts` 계정마다 `access_token(need_scope=TASKS_SCOPE)` → 읽기, 한 계정 실패가 다른 계정을 막지 않음, 계정이 둘 이상이면 `[이름]` 표시), `split`/`when_text`/`task_line`/`lines`(표시), `section(cfg, now, kind)`(아침·저녁·일요일 저녁 구역, 끄면 `[]`, 예외 안 냄).
-- **표시**: 아침 `■ 할 일 (오늘까지)`(지남 + 오늘, 날짜 없는 것은 "N개" 한 줄), 저녁 `■ 내일까지 할 일`, 일요일 저녁 `■ 다음 주까지 할 일`. 구글 할 일에는 시각이 없어 마감일은 날짜 부분만 읽는다(시간대 변환 없음). 지난 것은 "지남 10/20".
+- **표시**: 아침 `■ 할 일 (오늘까지)`(지남 + 오늘, 날짜 없는 것은 맨 위 하나를 한 줄로, 나머지는 "…날짜 없는 할 일 외 N개" 한 줄), 저녁 `■ 내일까지 할 일`, 일요일 저녁 `■ 다음 주까지 할 일`. 구글 할 일에는 시각이 없어 마감일은 날짜 부분만 읽는다(시간대 변환 없음). 지난 것은 "지남 10/20".
 - **`/할일`**(별칭 `todo`, `tasks`): `commands.render_tasks(days=7, only, keyword)`. 문장으로 묻기에는 조회 종류 `할일` 이 추가되었다(키워드·일수·계정 사용 가능, 제목은 모델에 가지 않음).
 - **권한**: `google_auth.TASKS_SCOPE`. `login(tasks=True)` 만 이 권한을 더해 요청하고, 허용 여부를 확인해 알려 준다. `token_has_scope()` 로 `selfcheck` 가 "권한 있음/없음"을 보여 준다(토큰 내용은 출력 안 함). 설정 `tasks_accounts`(google_accounts 이름 목록, 기본 `[]` = 꺼짐).
 - 아침·저녁은 `fetch_tasks=` 를 받아 시험에서 가짜로 바꿀 수 있고, 조회는 잠금 밖에서 한다.

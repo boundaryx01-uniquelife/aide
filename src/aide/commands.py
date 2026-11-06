@@ -244,7 +244,9 @@ def render_tasks(cfg: Config, now: datetime, *, fetch=gtasks.fetch, days: int = 
     if undated and keyword:
         lines += [gtasks.task_line(t, today) for t in undated[:gtasks.MAX_SHOWN]]
     elif undated:
-        lines.append(f"날짜 없는 할 일 {len(undated)}개")
+        lines.append(gtasks.task_line(undated[0], today))
+        if len(undated) > 1:
+            lines.append(f"…날짜 없는 할 일 외 {len(undated) - 1}개")
     if not dated and not undated and not failed:
         lines.append("없어요.")
     lines += gtasks.failure_line(failed, total)

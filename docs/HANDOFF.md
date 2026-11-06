@@ -85,7 +85,7 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - 다음 후보: Google Tasks 연동(아침 인사에 "오늘 할 일"), C2 종합 답변(별도 보안 검토), L2/L3.
 
 ## 구글 할 일 구현 완료 — 브랜치 feat/google-tasks, PR 전 · 서버 반영 전
-- 내용: `tasks.readonly` 읽기 전용. `foruniquelife` 계정(설정 이름 "개인") 하나만(`tasks_accounts: ["개인"]`). 아침 `■ 할 일 (오늘까지)`(날짜 없는 것은 개수만), 저녁 `■ 내일까지 할 일`/일요일 `■ 다음 주까지 할 일`, `/할일`, 문장 질문의 `할일` 조회. 할 일 제목은 Anthropic 에 안 보냄. 메모·링크는 요청하지 않음. 기본 꺼짐.
+- 내용: `tasks.readonly` 읽기 전용. `foruniquelife` 계정(설정 이름 "개인") 하나만(`tasks_accounts: ["개인"]`). 아침 `■ 할 일 (오늘까지)`(날짜 없는 것은 맨 위 하나 + 나머지 개수), 저녁 `■ 내일까지 할 일`/일요일 `■ 다음 주까지 할 일`, `/할일`, 문장 질문의 `할일` 조회. 할 일 제목은 Anthropic 에 안 보냄. 메모·링크는 요청하지 않음. 기본 꺼짐.
 - 사용자 결정(2026-10-22): 위 설계 승인, 계정은 foruniquelife 만, 구글 콘솔 작업(Tasks API 켜기)은 Claude 가 브라우저로 해도 됨, 로그인 "허용" 클릭과 토큰 서버 복사는 사용자.
 - 새 파일: `src/aide/gtasks.py`, `tests/test_gtasks.py`. 바뀐 파일: `google_auth.py`(`TASKS_SCOPE`, `login(tasks=)`, `token_has_scope`, `exchange_code` 가 허용 scope 반환), `config.py`(`tasks_accounts`, `task_accounts()`, `할일` 명령), `commands.py`(`render_tasks`), `chat.py`(`할일` 조회), `morning.py`/`evening.py`(구역·`fetch_tasks`), `__main__.py`(`--tasks`, selfcheck), `config.example.json`, PRIVACY.md(Google Tasks 읽기와 문장 질문의 전송 범위 추가), README/ARCHITECTURE/SECURITY/ROADMAP.
 - 테스트 635개 통과(기존 582 + 신규 53).
