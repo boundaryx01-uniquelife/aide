@@ -120,6 +120,11 @@ def parse_date(text: str) -> Optional[datetime]:
 _SOURCE_SUFFIX = re.compile(r"\s+[-\u2013\u2014|]\s+([^-\u2013\u2014|]{1,30})$")
 
 
+def strip_source(title: str) -> str:
+    """The headline without the trailing " - outlet" that Google News appends."""
+    return _SOURCE_SUFFIX.sub("", (title or "").strip())
+
+
 def normalize_title(title: str) -> str:
     """Headline reduced to its letters/digits, without the trailing " - outlet" that
     Google News appends, so the same headline from two outlets compares equal."""

@@ -7,14 +7,15 @@ from datetime import datetime, time
 from typing import Callable, List, Optional, Sequence
 
 from . import accounts, gmail, google_auth, inbox, llm, netutil, rules, telegram
-from .checks import git_dirty, news_keywords, notice_pages
+from .checks import git_dirty, market_news, news_keywords, notice_pages
 from .config import Config
 from .models import Finding
 from .state import State, StateLocked, locked
 
 log = logging.getLogger("aide.heartbeat")
 
-SOURCE_LABELS = {"git": "작업 폴더", "news": "뉴스 키워드", "notice": "기관 공지·마감", "mail": "메일"}
+SOURCE_LABELS = {"git": "작업 폴더", "news": "뉴스 키워드", "notice": "기관 공지·마감", "mail": "메일",
+                 "market": "장중 특징주"}
 
 
 def parse_hhmm(value: str) -> time:
@@ -54,12 +55,20 @@ def collect(
     include_recent: bool = False,
     mail_status: Optional[dict] = None,
     recent_fetch=None,
+    preview: bool = False,
 ) -> List[Finding]:
+    """`preview` (dry run) ignores the news hours and the market-hours window so the owner can see
+    what the feeds would give right now."""
     findings: List[Finding] = []
     findings += git_dirty.check(cfg.watch_repos, cfg.git_dirty_threshold, now.date())
-    findings += news_keywords.check(
-        cfg.news_feeds, cfg.news_keywords, fetch, now=now, max_age_hours=cfg.news_max_age_hours
-    )
+    if preview or not cfg.news_hours or now.hour in cfg.news_hours:
+        findings += news_keywords.check(
+            cfg.news_feeds, cfg.news_keywords, fetch, now=now, max_age_hours=cfg.news_max_age_hours
+        )
+    if cfg.market_queries and (preview or market_news.in_market_hours(now)):
+        findings += market_news.check(
+            cfg.market_queries, cfg.market_exclude, fetch, now=now, max_age_hours=cfg.market_max_age_hours
+        )
     findings += notice_pages.check(
         cfg.notice_pages, cfg.notice_keywords, fetch, now, cfg.notice_max_per_page, cfg.notice_exclude
     )
@@ -143,7 +152,7 @@ def format_digest(findings: List[Finding], now: datetime, limit: int, folded: Se
             lines.append(f"\n■ {label}")
             for f in group:
                 lines += _finding_lines(f, title=f"[{SOURCE_LABELS.get(f.source, f.source)}] {f.title}")
-    for source in ("mail", "notice", "git", "news"):
+    for source in ("market", "mail", "notice", "git", "news"):
         group = [f for f in shown if f.source == source and f.priority < 2]
         extra = bool(folded) and source == "mail"
         if not group and not extra:
@@ -215,7 +224,7 @@ def run(
     path = cfg.resolved_state_path()
     if not send:
         state = State(path)
-        new = [f for f in collect(cfg, now, fetch, include_recent=True) if _is_new(state, f)]  # preview ignores the slot
+        new = [f for f in collect(cfg, now, fetch, include_recent=True, preview=True) if _is_new(state, f)]  # preview ignores the slot
         shown, _, folded = split_by_rules(cfg, new, load_rules(cfg))
         if not shown:
             log.info("새로 알릴 것이 없습니다.")  # silence is the normal case
