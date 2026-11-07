@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from . import accounts, gcal, gtasks, llm, netutil, telegram, weather
+from . import accounts, gcal, gtasks, llm, netutil, nudges, telegram, weather
 from .checks import git_dirty, yesterday
 from .config import Config
 from .heartbeat import in_quiet_hours
@@ -94,10 +94,21 @@ def highlight_picks(
     return [f"• {candidates[i].when} {candidates[i].title} — {llm.WHY_PHRASES[why]}" for i, why in picks]
 
 
+def _tasks_and_nudge(cfg: Config, now: datetime, events, fetch_tasks):
+    """Fetch tasks ONCE; build both the tasks section and the optional "바쁜 날" line from the result.
+    Never raises (a failure only drops what it feeds)."""
+    data = gtasks.gather_safe(cfg, fetch_tasks)
+    tasks_lines = gtasks.section_from(cfg, now, "morning", *data) if data else []
+    count = gtasks.count_due(data[0], now.date(), 0) if data else 0
+    return tasks_lines, nudges.busy_line(cfg, events, count)
+
+
 def _assemble(cfg: Config, now: datetime, weather_result, events, failed, total, highlight_lines=(),
-              tasks_lines=()) -> str:
+              tasks_lines=(), nudge_line="") -> str:
     day = (now - timedelta(days=1)).date()
     lines = [f"좋은 아침이에요 · {now:%m/%d}({WEEKDAYS[now.weekday()]})", ""]
+    if nudge_line:
+        lines += [nudge_line, ""]
     if highlight_lines:
         lines += ["■ 오늘의 핵심 (AI 판단)", *highlight_lines, ""]
     lines += _today_section(cfg, weather_result, events, failed, total)
@@ -132,8 +143,9 @@ def build_message(cfg: Config, now: datetime, *, fetch_weather=weather.today, fe
     """Preview/dry-run path: gathers and assembles in one call, with NO highlight
     section -- stage 2b, like 2a, never runs on a preview (it is a paid call)."""
     weather_result, events, failed, total = _gather(cfg, now, fetch_weather, fetch_events)
-    return _assemble(cfg, now, weather_result, events, failed, total,
-                     tasks_lines=gtasks.section(cfg, now, kind="morning", fetch_fn=fetch_tasks))
+    tasks_lines, nudge_line = _tasks_and_nudge(cfg, now, events, fetch_tasks)
+    return _assemble(cfg, now, weather_result, events, failed, total, tasks_lines=tasks_lines,
+                     nudge_line=nudge_line)
 
 
 def run(
@@ -187,8 +199,8 @@ def run(
         cfg, events, weather_result, now=now, calls_today=State(path).llm_calls_today(now),
         api_key=os.environ.get("ANTHROPIC_API_KEY", ""), call_status=call_status,
     )
-    tasks_lines = gtasks.section(cfg, now, kind="morning", fetch_fn=fetch_tasks)   # no lock held, like the other fetches
-    message = _assemble(cfg, now, weather_result, events, failed, total, highlight_lines, tasks_lines)
+    tasks_lines, nudge_line = _tasks_and_nudge(cfg, now, events, fetch_tasks)   # no lock held, like the other fetches
+    message = _assemble(cfg, now, weather_result, events, failed, total, highlight_lines, tasks_lines, nudge_line)
 
     try:
         with locked(path):
