@@ -281,7 +281,8 @@ def render_help(cfg: Config, now: datetime) -> str:
     return "\n".join(lines)
 
 
-GOOGLE_PERMS = (("일정", google_auth.CAL_SCOPE), ("메일", google_auth.GMAIL_SCOPE), ("할 일", google_auth.TASKS_SCOPE))
+GOOGLE_PERMS = (("일정", google_auth.CAL_SCOPE), ("메일", google_auth.GMAIL_SCOPE), ("할 일", google_auth.TASKS_READ_SCOPES),
+              ("할 일 쓰기", google_auth.TASKS_WRITE_SCOPE))
 
 
 def _google_line(cfg: Config) -> str:

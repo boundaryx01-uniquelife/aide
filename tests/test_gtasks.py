@@ -127,7 +127,7 @@ class GatherTests(unittest.TestCase):
         self.assertEqual((len(tasks), failed, total), (1, [], 1))
         self.assertEqual(tok.call_count, 1)
         self.assertEqual(tok.call_args.args[1].name, "t1.json")
-        self.assertEqual(tok.call_args.kwargs["need_scope"], google_auth.TASKS_SCOPE)
+        self.assertEqual(tok.call_args.kwargs["need_scope"], google_auth.TASKS_READ_SCOPES)   # tasks.readonly or tasks (read+write)
 
     def test_off_when_no_tasks_accounts(self):
         ((tasks, failed, total), tok) = self.gather(make_cfg(tasks_accounts=[]))

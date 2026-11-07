@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable, List, Optional, Tuple, Union
 
-from . import chat, cleanup, commands, memory as memory_mod, rules as rules_mod, telegram
+from . import chat, cleanup, commands, memory as memory_mod, rules as rules_mod, taskadd, telegram
 from .config import Config
 from .state import State, StateLocked, locked
 
@@ -64,10 +64,21 @@ def release_watcher(cfg: Config) -> None:
         pass
 
 
-def buttons_for(digest_id: str, with_clean: bool = False):
+def extra_buttons(digest_id: str, with_clean: bool = False, with_task: bool = False):
+    """The buttons that outlive 확인/무시: [🧹 정리] (L1) and [📝 할 일로] (mail -> task), in one row."""
+    row = []
+    if with_clean:
+        row.append(("🧹 정리", f"m:{digest_id}:open"))
+    if with_task:
+        row.append(("📝 할 일로", f"t:{digest_id}:open"))
+    return row
+
+
+def buttons_for(digest_id: str, with_clean: bool = False, with_task: bool = False):
     rows = [[("✅ 확인", f"d:{digest_id}:ok"), ("🔕 무시", f"d:{digest_id}:skip"), ("⏰ 나중에", f"d:{digest_id}:later")]]
-    if with_clean:   # stage L1: only when this digest lists at least one mail sender
-        rows.append([("🧹 정리", f"m:{digest_id}:open")])
+    extra = extra_buttons(digest_id, with_clean, with_task)   # L1: only when the digest lists a mail sender; task: only with mails
+    if extra:
+        rows.append(extra)
     return rows
 
 
@@ -196,7 +207,8 @@ def process_updates(
     rule_set=None,
     chat_max_per_day: int = 0,
     memory=None,
-) -> Tuple[int, List[Union[str, chat.ChatRequest, Notice]]]:
+    tasks_write: bool = False,
+) -> Tuple[int, List[Union[str, chat.ChatRequest, Notice, taskadd.TaskAddRequest]]]:
     """Apply button presses to `state`, and decide which stage-3b commands may run.
 
     Returns (how many updates were acted on, canonical command names to execute
@@ -223,11 +235,16 @@ def process_updates(
     `/기억 <글>` is stored and `/기억` lists, under the same lock, limits and staleness rules as the
     other commands. Its replies are Notices (sent after the lock). Nothing but the owner's own
     message text is ever stored; the text is never logged.
+
+    `tasks_write` (mail -> task buttons `t:...`): the buttons only choose a mail and a due date. The final
+    press is checked here (digest known, not added before, under today's limit) and handed back as a
+    `taskadd.TaskAddRequest`; the Google call itself is made by `poll_once` after the lock is released.
     """
     now = now or datetime.now()
     enabled_commands = list(enabled_commands)
     handled = ignored = 0
-    to_run: List[Union[str, chat.ChatRequest, Notice]] = []
+    to_run: List[Union[str, chat.ChatRequest, Notice, taskadd.TaskAddRequest]] = []
+    task_pending: set = set()
     batch_count = 0
     start_offset = state.offset
     stale_skipped = limited = chat_limited = chat_busy = unknown_noted = long_noted = False
@@ -252,6 +269,20 @@ def process_updates(
                 toast = memory_mod.EXPIRED
                 if memory is not None:
                     toast = _memory_button(data, cq, memory, token=token, chat_id=str(allowed_chat_id), api=api)
+                    handled += 1
+                try:
+                    api.answer_callback(token, str(cq.get("id", "")), toast)
+                except telegram.TelegramError as e:
+                    log.info("토스트 표시 실패: %s", e)
+                continue
+            if taskadd.is_task_data(data):
+                # Mail -> task buttons. With the feature off: "expired", nothing is read or changed.
+                toast = taskadd.EXPIRED_OFF
+                if tasks_write:
+                    toast, request = taskadd.handle(data, cq, state=state, token=token, chat_id=str(allowed_chat_id),
+                                                    api=api, now=now, pending=task_pending)
+                    if request is not None:
+                        to_run.append(request)
                     handled += 1
                 try:
                     api.answer_callback(token, str(cq.get("id", "")), toast)
@@ -287,11 +318,12 @@ def process_updates(
             except telegram.TelegramError as e:
                 log.info("토스트 표시 실패(오래된 버튼이면 정상, 기록은 반영됨): %s", e)
             if m and (outcome in REPLIES or outcome == "dup"):  # also on a repeat press: tidy up a stuck keyboard
-                keep_clean = rule_set is not None and bool((state.digests.get(m.group(1)) or {}).get("targets"))
+                rec = state.digests.get(m.group(1)) or {}
+                keep = extra_buttons(m.group(1), rule_set is not None and bool(rec.get("targets")),
+                                     tasks_write and bool(rec.get("mails")))
                 try:
-                    if keep_clean:   # stage L1: leave only the 정리 button so the owner can still use it
-                        api.set_buttons(token, str(allowed_chat_id), int(cq["message"]["message_id"]),
-                                        [[("🧹 정리", f"m:{m.group(1)}:open")]])
+                    if keep:   # leave only 정리 / 할 일로 so the owner can still use them
+                        api.set_buttons(token, str(allowed_chat_id), int(cq["message"]["message_id"]), [keep])
                     else:
                         api.clear_buttons(token, str(allowed_chat_id), int(cq["message"]["message_id"]))
                 except (telegram.TelegramError, KeyError, TypeError, ValueError) as e:
@@ -404,7 +436,8 @@ def poll_once(
         memory = memory_mod.Memory(memory_mod.path_for(path)) if cfg.memory_enabled else None
         handled, to_run = process_updates(
             updates, state, token=token, allowed_chat_id=chat_id, enabled_commands=cfg.commands, now=now, api=api,
-            rule_set=rule_set, chat_max_per_day=cfg.chat_max_per_day if cfg.chat_enabled else 0, memory=memory)
+            rule_set=rule_set, chat_max_per_day=cfg.chat_max_per_day if cfg.chat_enabled else 0, memory=memory,
+            tasks_write=cfg.tasks_write)
         if rule_set is not None:
             rule_set.save()   # same lock as the state: one writer at a time
         if memory is not None:
@@ -416,6 +449,11 @@ def poll_once(
         if isinstance(item, Notice):
             reply = item.text
             _reply(api, token, chat_id, reply, item.buttons)
+            continue
+        elif isinstance(item, taskadd.TaskAddRequest):
+            # The one Google WRITE: made here, with the state lock released. Recorded only on success.
+            res = taskadd.run(item, cfg, now)
+            taskadd.finish(item, res, state_path=path, now=now, api=api, token=token, chat_id=chat_id)
             continue
         elif isinstance(item, chat.ChatRequest):
             reply, refund = chat.answer_full(item, cfg, now, api_key=os.environ.get("ANTHROPIC_API_KEY", ""))

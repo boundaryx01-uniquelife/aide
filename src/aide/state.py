@@ -73,6 +73,7 @@ class State:
         self.chat_calls: Dict[str, int] = {}  # stage C1: date (ISO) -> chat sentences sent to the LLM
         self.chat_times: List[float] = []  # stage C1: timestamps of those sentences, for the hourly limit
         self.hidden: Dict[str, Dict[str, int]] = {}  # stage L1: date (ISO) -> {rule_key: count} of mail left out
+        self.task_adds: Dict[str, int] = {}  # mail -> task: date (ISO) -> tasks added, for the daily limit
         self._load()
 
     def _load(self) -> None:
@@ -81,8 +82,9 @@ class State:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             self.seen = {str(k): str(v) for k, v in dict(data.get("seen", {})).items()}
-            self.digests = {
-                str(k): {
+            self.digests = {}
+            for k, v in dict(data.get("digests", {})).items():
+                rec = {
                     "keys": [str(x) for x in v["keys"]],
                     "at": str(v["at"]),
                     "status": str(v.get("status", "pending")),
@@ -91,8 +93,13 @@ class State:
                         for x in v.get("targets", []) if isinstance(x, dict) and "k" in x
                     ],
                 }
-                for k, v in dict(data.get("digests", {})).items()
-            }
+                mails = [
+                    {"k": str(x["k"]), "t": str(x.get("t", "")), "u": str(x.get("u", "")), "a": str(x.get("a", ""))}
+                    for x in v.get("mails", []) if isinstance(x, dict) and "k" in x
+                ]
+                if mails:   # old files (and runs with the feature off) have no such key at all
+                    rec["mails"] = mails[:8]
+                self.digests[str(k)] = rec
             self.offset = int(data.get("offset", 0))
             self.cmd_times = [float(x) for x in data.get("cmd_times", [])]
             self.llm_calls = {str(k): int(v) for k, v in dict(data.get("llm_calls", {})).items()}
@@ -102,6 +109,7 @@ class State:
                 str(d): {str(k): int(n) for k, n in dict(counts).items()}
                 for d, counts in dict(data.get("hidden", {})).items()
             }
+            self.task_adds = {str(k): int(v) for k, v in dict(data.get("task_adds", {})).items()}
         except (json.JSONDecodeError, OSError, ValueError, AttributeError, KeyError, TypeError):
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             backup = self.path.with_name(f"{self.path.name}.corrupt-{stamp}")
@@ -112,6 +120,7 @@ class State:
                 log.warning("상태 파일을 읽을 수 없어 새로 시작합니다.")
             self.seen, self.digests, self.offset, self.cmd_times, self.llm_calls = {}, {}, 0, [], {}
             self.hidden = {}
+            self.task_adds = {}
             self.chat_calls = {}
             self.chat_times = []
 
@@ -121,15 +130,21 @@ class State:
     def mark(self, key: str, now: datetime) -> None:
         self.seen[key] = now.isoformat(timespec="seconds")
 
-    def add_digest(self, digest_id: str, keys, now: datetime, targets=None) -> None:
+    def add_digest(self, digest_id: str, keys, now: datetime, targets=None, mails=None) -> None:
         """`targets` (stage L1): [{"k": rule_key, "l": label, "u": gmail link}, ...] -- the
-        senders the owner may open "정리" on for this digest (max 8)."""
-        self.digests[digest_id] = {
+        senders the owner may open "정리" on for this digest (max 8).
+        `mails` (mail -> task): [{"k": finding key, "t": title, "u": gmail link, "a": account}, ...] -- the
+        mails the owner may turn into a task (max 8). Stored only when given, so with the feature off the
+        state file is exactly what it always was."""
+        rec = {
             "keys": list(keys),
             "at": now.isoformat(timespec="seconds"),
             "status": "pending",
             "targets": [dict(x) for x in (targets or [])][:8],
         }
+        if mails:
+            rec["mails"] = [dict(x) for x in mails][:8]
+        self.digests[digest_id] = rec
 
     def resolve_digest(self, digest_id: str, action: str) -> Optional[str]:
         """Apply a button press. Returns the action taken, "dup" if this digest was
@@ -208,6 +223,24 @@ class State:
         self.chat_times = [t for t in self.chat_times if t >= cutoff]
         return len(self.chat_times)
 
+    def task_adds_today(self, now: datetime, days: int = 7) -> int:
+        """Mail -> task daily limit: prune old days, return how many tasks were added today."""
+        cutoff = now.date() - timedelta(days=days)
+
+        def old(k: str) -> bool:
+            try:
+                return date.fromisoformat(k) < cutoff
+            except ValueError:
+                return True
+
+        for k in [k for k in self.task_adds if old(k)]:
+            del self.task_adds[k]
+        return self.task_adds.get(now.date().isoformat(), 0)
+
+    def record_task_add(self, now: datetime) -> None:
+        key = now.date().isoformat()
+        self.task_adds[key] = self.task_adds.get(key, 0) + 1
+
     def add_hidden(self, rule_key: str, now: datetime) -> None:
         day = self.hidden.setdefault(now.date().isoformat(), {})
         day[rule_key] = day.get(rule_key, 0) + 1
@@ -256,7 +289,7 @@ class State:
             json.dumps(
                 {"seen": self.seen, "digests": self.digests, "offset": self.offset,
                  "cmd_times": self.cmd_times, "llm_calls": self.llm_calls, "chat_calls": self.chat_calls, "chat_times": self.chat_times,
-                 "hidden": self.hidden},
+                 "hidden": self.hidden, "task_adds": self.task_adds},
                 ensure_ascii=False,
                 indent=1,
                 sort_keys=True,

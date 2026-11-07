@@ -248,3 +248,26 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 - **`weather_alerts.py`** (`weather_alerts`, `outdoor_keywords`): `weather.detail`(과거 1일 포함 예보: 최저·최고·강수확률·코드·풍속 m/s·전날 최저)와 `air_max`(대기질 그날 최댓값)로 `build_lines` 가 출근 → 야외 일정(≤2줄) → 교실 → 준비 순으로 고정 문구를 만들고 이미 쓴 요인은 반복하지 않는다. 최대 5줄, 없으면 구역 생략. 일정은 `morning/evening` 이 이미 모은 `events` 를 재사용(추가 조회 없음), 일정 줄은 `gcal.line`. 아침은 오프셋 0, 저녁은 1(일요일 주간 모드에서도 월요일 하루만). 조회는 잠금 밖, 드라이런=전송.
 - 위치: 아침은 오늘 일정 구역 다음에 날씨 안내, GitHub 구역 다음에 점검 구역. 저녁은 일정 구역 다음.
 - **한계**: 로그는 줄 형식(`basicConfig`)에 맞는 줄만 센다(트레이스백 줄 제외). GitHub 토큰 만료 확인은 아침마다 계정당 한 번 `GET /user`. 날씨는 설정된 한 지점 기준이며 시간대별 판단은 하지 않는다.
+
+## 메일 → 할 일 — 구현 2026-11-07, 서버 배포 전 · 기본 꺼짐 (`tasks_write`)
+aide 의 첫 "쓰기". 메일 알림에서 버튼 두 번으로 그 메일을 구글 할 일에 **추가**한다(수정·삭제 API 없음). LLM 안 씀.
+
+**버튼 흐름** (L1 `[🧹 정리]` 와 같은 모양)
+```
+알림(digest)  [✅ 확인] [🔕 무시] [⏰ 나중에]
+              [🧹 정리] [📝 할 일로]                       t:<digest>:open
+   └─ 새 메시지 "어느 메일을 할 일로 추가할까요?" (번호·제목, 추가한 것은 ✅)
+        [1. 제목] ... (최대 8)  [닫기]                     t:<digest>:p<0-7> / :close
+          └─ 메시지 수정 "할 일 추가: <제목>"
+               [오늘] [내일] [날짜 없음] / [취소]          t:<digest>:p<i>:(d0|d1|dn) / :close
+                 └─ 성공: "✅ 할 일에 추가했어요: <제목> (내일)"
+                    실패: "추가하지 못했어요 (로그 확인)" + 같은 선택 버튼(다시 시도)
+                    권한 없음: "할 일 쓰기 권한이 없어요 — PC에서 python -m aide google-login --account <계정> --tasks-write 후 토큰을 서버로 복사"
+```
+- **`taskadd.py`**: `MENU_RE`(`\Z` 로 끝), `handle`(잠금 안: 열기/고르기/닫기 화면 + 마지막 누름 검증 → `TaskAddRequest`), `run`(잠금 밖: 계정 고르기 → 쓰기 권한 확인 → `netutil.post_json(TASKS_URL, {title, notes?, due?})` → `Result`), `finish`(성공이면 잠금을 잡아 `taskadd:<digest>:<i>` 기록 + 하루 카운트, 그다음 메시지 수정).
+- **요청 본문**: `title`(clean 100자), `notes`(Gmail 링크일 때만), `due`(`YYYY-MM-DDT00:00:00.000Z`; `d0`=서버 현지(KST) 오늘, `d1`=내일, `dn`=키 없음). 서버는 `TZ=Asia/Seoul` 이어야 한다(다른 날짜 로직과 같은 전제).
+- **`inbox.process_updates(tasks_write=)`**: 새 분기 `taskadd.is_task_data`. 꺼짐이면 "만료된 버튼이에요" 만. 한 묶음 안에서 이미 대기 중인 항목은 `task_pending` 으로 걸러(이중 클릭 한 번만), 하루 한도는 기록된 수 + 대기 수. `to_run` 에 `TaskAddRequest` 를 넣고, `poll_once` 가 잠금을 푼 뒤 `run`→`finish` (대화 C1 의 `ChatRequest` 와 같은 방식).
+- **키보드 규칙**: `inbox.extra_buttons` 가 `[🧹 정리]`(규칙 켜짐 + targets 있음)와 `[📝 할 일로]`(tasks_write + mails 있음)를 한 줄로 만들고, 알림 전송과 `확인/무시/나중에` 뒤 키보드 줄이기에 같이 쓴다. 둘 다 없으면 예전처럼 키보드를 지운다.
+- **데이터**: `digests[id]["mails"] = [{"k": finding key, "t": clean 제목 100자, "u": mail.google.com 링크 또는 "", "a": 계정 이름}]`(최대 8, `tasks_write` 일 때만 쓰므로 꺼짐이면 상태 파일이 전과 같다. 옛 파일은 키 없이 로드, 45일 prune 은 digest 와 함께), `task_adds`(날짜 → 건수, 7일 지나면 정리), `seen["taskadd:<digest>:<i>"]`.
+- **권한/계정**: `google_auth.TASKS_WRITE_SCOPE`(= `.../auth/tasks`), `login(tasks_write=)`/`google-login --tasks-write`, `access_token(need_scope=)` 가 튜플(대안)을 받음, 읽기 호출부는 `TASKS_READ_SCOPES`. `/연결` 은 "할 일"(읽기, 둘 중 하나)과 "할 일 쓰기"를 구분해 보여 준다. 설정 검증: `tasks_write` 는 bool, 켜려면 `tasks_accounts` 필요. `selfcheck` 에 `tasks_write` 줄.
+- **한계**: 한 번 만든 할 일을 aide 가 되돌리거나 고치지 못한다(구글 할 일에서 직접). 기록 직전 비정상 종료 시 중복 가능. 기본 목록(`@default`)에만 추가. 제목은 메일 제목 그대로(수정 불가), 마감은 오늘/내일/없음만. 알림에 보이지 않는 메일(접힌 광고·정기 메일, 8개 밖)은 고를 수 없다.
