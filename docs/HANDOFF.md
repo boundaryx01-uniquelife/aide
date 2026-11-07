@@ -13,7 +13,7 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 |---|---|---|---|
 | 1 | 구글 로그인 7일 만료 소멸 확인 (로그에 "만료되었습니다" 없음) | 확인 | 날짜는 지남(2026-10-20), 서버 로그 확인 대기(사용자) |
 | 2 | L1 [🧹 정리] 버튼 실사용 확인 (메일 알림에서) | 확인 | 메일 알림이 올 때 |
-| 3 | 로그인 만료 예고 알림(텔레그램) | 소형 기능 | 사용자 결정 대기 |
+| 3 | 로그인 만료 예고 알림(텔레그램) | 소형 기능 | 이 PR(고장 알림)로 완료: 구글 로그인 실패를 계정당 하루 한 번 알림 |
 | 4 | 2b 서버에서 켜기(`llm_highlights`) | 설정 | 사용자 결정 + Anthropic 정책 확인 미완 |
 | 5 | L2: 같은 발신자 광고·정기 메일이 반복되면 규칙 제안 | 기능 | 예정 (설계부터) |
 | 6 | L3: 취향을 LLM 판단에 반영 (뉴스 입맛) | 기능 | 예정 (설계·보안 검토부터) |
@@ -26,6 +26,8 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 | 13 | 먼저 챙기기 2단계: 다음 일정 30~60분 전 알림 | 기능 | 보류(1단계 써 본 뒤 결정) |
 | 14 | GitHub 아침 브리핑(계정 전체, 실패 알림) | 기능 | 구현 완료, PR 전 · 토큰 등록 필요(사용자) |
 | 15 | /기억(직접 쓴 것만 기억, 대화·중요도 판단에 반영) | 기능 | 구현 완료, PR 전 |
+| 16 | 고장 알림·/연결 | 기능 | 구현 완료, PR 전 |
+| 17 | 날씨 기반 종합 안내(출근·일정 방향·교실 운영·준비물) | 기능 | 구현 완료, PR 전 |
 
 - 하지 않기로 함: 4번(메일 답장 초안). 개인 일정 알림 외 "기억해서 챙기기"(한 줄 캡처 등)는 L 단계가 끝난 뒤 다시 논의.
 - 별도 정리 항목은 아래 "남은 정리" 참고(PC 예약 작업 삭제 여부 확인 등).
@@ -148,6 +150,12 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - 바뀐 파일: `memory.py`(신규), `inbox.py`(`Notice.buttons`, `/기억`·`k:` 버튼), `chat.py`·`llm.py`(프롬프트 블록), `config.py`, `commands.py`(도움말), `__main__.py`(selfcheck), `.gitignore`, `config.example.json`, `tests/test_memory.py`(신규), 문서.
 - 테스트 811개 통과(기존 757 + 신규 54), 기존 기대값 변경 없음.
 - 남은 일: PR 병합 → 서버 반영 → `config.json` 에 `"memory_enabled": true` → `aide-watch` 재시작 → selfcheck `memory` 줄 확인 → 텔레그램 `/기억 …` 로 확인.
+
+## 고장 알림·/연결·날씨 안내 구현 완료 — 브랜치 feat/health-connections-weather, PR 전 · 서버 반영 전
+- 내용: `health_alerts`(어제 기록 점검·GitHub 토큰 만료 14일 예고·구글 로그인 실패 하루 한 번 알림), `/연결`(항상 가능), `weather_alerts`+`outdoor_keywords`(아침 오늘·저녁 내일 `■ 날씨에 따른 안내` 최대 5줄). 모두 기본 꺼짐, LLM 없음. 설계: ARCHITECTURE.md 끝, 보안: SECURITY.md 끝.
+- 바뀐 파일: `health.py`·`weather_alerts.py`(신규), `netutil.py`(`get_json_with_headers`), `weather.py`(`detail`), `commands.py`, `heartbeat.py`, `morning.py`, `evening.py`, `config.py`, `__main__.py`, `config.example.json`, 테스트 3개 신규(`test_health.py`, `test_connections.py`, `test_weather_alerts.py`), 문서.
+- 테스트 966개 통과(기존 811 + 신규 155), 기존 기대값 변경 없음.
+- 남은 일: PR 병합 → 서버 반영 → `config.json` 에 `"health_alerts": true`, `"weather_alerts": true`(`weather_enabled` 필요) → `aide-watch` 재시작 → selfcheck `health`·`weather_alerts` 줄 확인 → `/연결`, 아침·저녁 미리보기 확인.
 
 ## 최근 건드린 파일
 - 3b 명령: 위 섹션 참고.

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Optional
 from urllib.parse import urlencode
 
 from . import netutil
@@ -49,6 +49,50 @@ def on_day(lat: float, lon: float, offset: int, get: Callable = netutil.get_json
             _WMO.get(int(d["weather_code"][offset]), "날씨 정보"),
             round(d["temperature_2m_min"][offset]), round(d["temperature_2m_max"][offset]),
             round(d["precipitation_probability_max"][offset] or 0),
+        )
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError):
+        raise netutil.NetError("날씨 응답 형식이 예상과 다릅니다.") from None
+
+
+@dataclass(frozen=True)
+class Detail:
+    """What the weather rules (weather_alerts.py) need for one day: rounded low/high, rain chance, the WMO
+    weather code and the PREVIOUS day's low (None when the response has no such value)."""
+    low: int
+    high: int
+    rain_pct: int
+    code: int
+    prev_low: Optional[int]
+    wind: Optional[float] = None   # daily max wind, m/s
+
+
+def _wind(d: dict, i: int) -> Optional[float]:
+    try:
+        w = d["wind_speed_10m_max"][i]
+    except (KeyError, IndexError, TypeError):
+        return None
+    return float(w) if isinstance(w, (int, float)) and not isinstance(w, bool) and w == w else None
+
+
+def detail(lat: float, lon: float, offset: int, get: Callable = netutil.get_json) -> Detail:
+    """Forecast numbers for today + `offset` days plus the day before's low. Separate from `on_day` (its
+    request and results stay as they were); `past_days=1` puts yesterday at index 0."""
+    if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= MAX_OFFSET:
+        raise netutil.NetError("날씨는 오늘부터 7일 이내만 조회할 수 있습니다.")
+    q = urlencode({
+        "latitude": lat, "longitude": lon, "timezone": "Asia/Seoul", "past_days": 1, "wind_speed_unit": "ms", "forecast_days": offset + 1,
+        "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code,wind_speed_10m_max",
+    })
+    data = get(f"{URL}?{q}")
+    d = data.get("daily", {}) if isinstance(data, dict) else {}
+    i = offset + 1   # index 0 is yesterday
+    try:
+        prev = d["temperature_2m_min"][i - 1]
+        return Detail(
+            round(d["temperature_2m_min"][i]), round(d["temperature_2m_max"][i]),
+            round(d["precipitation_probability_max"][i] or 0), int(d["weather_code"][i]),
+            round(prev) if isinstance(prev, (int, float)) and not isinstance(prev, bool) else None,
+            _wind(d, i),
         )
     except (KeyError, IndexError, TypeError, ValueError, AttributeError):
         raise netutil.NetError("날씨 응답 형식이 예상과 다릅니다.") from None

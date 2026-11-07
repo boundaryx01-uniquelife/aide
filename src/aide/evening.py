@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from . import accounts, gcal, gtasks, llm, netutil, nudges, rules as rules_mod, telegram
+from . import accounts, gcal, gtasks, llm, netutil, nudges, rules as rules_mod, telegram, weather_alerts
 from .checks import git_dirty, news_keywords, notice_pages, yesterday
 from .config import Config
 from .heartbeat import in_quiet_hours
@@ -143,8 +143,19 @@ def hidden_lines(cfg: Config, now: datetime) -> List[str]:
     return out
 
 
+def _alert_lines(cfg: Config, now: datetime, events, fetch_alerts) -> List[str]:
+    """"■ 날씨에 따른 안내" section for tomorrow (on Sunday: Monday). Never raises."""
+    if not cfg.weather_alerts:
+        return []
+    try:
+        return list(fetch_alerts(cfg, now, events, 1))
+    except Exception:  # noqa: BLE001
+        log.exception("날씨 판단 구역 처리 중 오류")
+        return []
+
+
 def _assemble(cfg: Config, now: datetime, events, failed, total, rows, highlight_lines=(), hidden=(),
-              tasks_lines=(), nudge_line="") -> str:
+              tasks_lines=(), nudge_line="", alert_lines=()) -> str:
     lines = [f"저녁 정리 · {now:%m/%d}({WEEKDAYS[now.weekday()]})", ""]
     if nudge_line:
         lines += [nudge_line, ""]
@@ -152,6 +163,7 @@ def _assemble(cfg: Config, now: datetime, events, failed, total, rows, highlight
         header = "이번 주 핵심" if _is_weekly(now) else "내일의 핵심"
         lines += [f"■ {header} (AI 판단)", *highlight_lines, ""]
     lines += _calendar_section(cfg, now, events, failed, total)
+    lines += alert_lines
     lines += _deadline_section(cfg, now, rows)
     lines += tasks_lines
 
@@ -192,18 +204,21 @@ def _tasks_and_nudge(cfg: Config, now: datetime, events, fetch_tasks):
 
 
 def build_message(cfg: Config, now: datetime, *, fetch_events=gcal.today_events,
-                  fetch=news_keywords.fetch_feed, fetch_week=gcal.events_between, fetch_tasks=gtasks.fetch) -> str:
+                  fetch=news_keywords.fetch_feed, fetch_week=gcal.events_between, fetch_tasks=gtasks.fetch,
+                  fetch_alerts=weather_alerts.section) -> str:
     """Preview/dry-run path: gathers and assembles in one call, with NO highlight
     section -- stage 2b, like 2a, never runs on a preview (it is a paid call)."""
     events, failed, total, rows = _gather(cfg, now, fetch_events, fetch_week, fetch)
     tasks_lines, nudge_line = _tasks_and_nudge(cfg, now, events, fetch_tasks)
     return _assemble(cfg, now, events, failed, total, rows, hidden=hidden_lines(cfg, now),
-                     tasks_lines=tasks_lines, nudge_line=nudge_line)
+                     tasks_lines=tasks_lines, nudge_line=nudge_line,
+                     alert_lines=_alert_lines(cfg, now, events, fetch_alerts))
 
 
 def run(cfg: Config, *, send: bool = False, force: bool = False, now: Optional[datetime] = None,
         sender: Callable[..., None] = telegram.send, fetch=news_keywords.fetch_feed,
-        fetch_events=gcal.today_events, fetch_week=gcal.events_between, fetch_tasks=gtasks.fetch) -> int:
+        fetch_events=gcal.today_events, fetch_week=gcal.events_between, fetch_tasks=gtasks.fetch,
+        fetch_alerts=weather_alerts.section) -> int:
     """Exit codes: 0 ok (including 'not time yet' / 'already sent'), 1 send failed, 2 setup problem.
 
     Dry run (default) prints the message and changes nothing. With --send the day is
@@ -228,7 +243,7 @@ def run(cfg: Config, *, send: bool = False, force: bool = False, now: Optional[d
 
     if not send:
         print(build_message(cfg, now, fetch_events=fetch_events, fetch=fetch, fetch_week=fetch_week,
-                            fetch_tasks=fetch_tasks))
+                            fetch_tasks=fetch_tasks, fetch_alerts=fetch_alerts))
         return 0
     if not force:
         if now.hour < (cfg.evening_hour or 0):
@@ -247,7 +262,9 @@ def run(cfg: Config, *, send: bool = False, force: bool = False, now: Optional[d
     )
     hidden = hidden_lines(cfg, now)
     tasks_lines, nudge_line = _tasks_and_nudge(cfg, now, events, fetch_tasks)   # no lock held, like the other fetches
-    message = _assemble(cfg, now, events, failed, total, rows, highlight_lines, hidden, tasks_lines, nudge_line)
+    alert_lines = _alert_lines(cfg, now, events, fetch_alerts)   # no lock held, like the other fetches
+    message = _assemble(cfg, now, events, failed, total, rows, highlight_lines, hidden, tasks_lines, nudge_line,
+                        alert_lines)
     extra = {"buttons": [[("📋 규칙 목록", "r:list")]]} if hidden else {}
 
     try:
