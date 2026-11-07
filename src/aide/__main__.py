@@ -82,6 +82,7 @@ def main(argv=None) -> int:
         print(f"market           : {', '.join(cfg.market_queries) if cfg.market_queries else '꺼짐'}")
         ta = cfg.task_accounts()
         print("tasks            : " + (", ".join((a.name or "기본") + (" (권한 있음)" if google_auth.token_has_scope(a.token_path, google_auth.TASKS_SCOPE) else " (권한 없음: google-login --tasks)") for a in ta) if ta else "꺼짐"))
+        print(f"nudges           : {', '.join(cfg.nudges) + ' (바쁜 날 기준 일정 ' + str(cfg.busy_events) + '개)' if cfg.nudges else '꺼짐'}")
         print(f"llm_highlights   : {', '.join(cfg.llm_highlights) if cfg.llm_highlights else '꺼짐'}")
         print(f"rules            : {'켜짐' if cfg.rules_enabled else '꺼짐'}"
               f" / 광고·정기 메일 접기 {'켜짐' if cfg.mail_bulk_fold else '꺼짐'}")

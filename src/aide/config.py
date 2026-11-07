@@ -98,6 +98,10 @@ class Config:
     # Google Tasks (read-only, tasks.readonly): names from google_accounts whose task lists are read.
     # Empty = off. Only these accounts need the extra permission (`google-login --tasks`).
     tasks_accounts: List[str] = field(default_factory=list)
+    # "먼저 챙겨 알리기" (ARCHITECTURE.md "먼저 챙기기"): one extra line in the morning / evening message.
+    # Allowed: "busy" (morning, 바쁜 날) and "prep" (evening, 내일 준비). [] = off. No LLM, no new calls.
+    nudges: List[str] = field(default_factory=list)
+    busy_events: int = 5   # "busy" shows when today has at least this many events (or any overlap)
     # General news (news_feeds) only at these hours (e.g. [7, 12]); [] = at every check, as before.
     news_hours: List[int] = field(default_factory=list)
     # Intraday market headlines (checks/market_news.py): Google News searches, e.g. ["특징주", "상한가"].
@@ -183,6 +187,7 @@ def load_config(path: Optional[Path] = None) -> Config:
         raise ConfigError("rules_enabled / mail_bulk_fold 는 true/false 여야 합니다.")
     _check_chat(cfg)
     _check_tasks(cfg)
+    _check_nudges(cfg)
     _check_news(cfg)
     if cfg.rules_enabled and cfg.evening_hour is None:
         # The weekly "걸러낸 것" summary in the evening wrap-up is the only place a rule that hides
@@ -229,6 +234,20 @@ def _check_tasks(cfg: "Config") -> None:
             raise ConfigError(f"tasks_accounts 에 google_accounts 에 없는 이름이 있습니다: {unknown}")
     elif len(t) > 1:
         raise ConfigError("계정이 하나뿐일 때 tasks_accounts 는 항목 하나만 쓸 수 있습니다.")
+
+
+NUDGE_NAMES = ("busy", "prep")
+
+
+def _check_nudges(cfg: "Config") -> None:
+    n = cfg.nudges
+    if not isinstance(n, list) or any(x not in NUDGE_NAMES for x in n):
+        raise ConfigError(f"nudges 는 {list(NUDGE_NAMES)} 중에서만 고를 수 있습니다.")
+    if len(set(n)) != len(n):
+        raise ConfigError("nudges 에 같은 값이 중복되어 있습니다.")
+    b = cfg.busy_events
+    if not isinstance(b, int) or isinstance(b, bool) or not 1 <= b <= 50:
+        raise ConfigError("busy_events 는 1~50 사이의 정수여야 합니다.")
 
 
 def _check_commands(commands) -> None:
