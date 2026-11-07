@@ -97,6 +97,18 @@ python -m unittest discover -s tests -v
 - 할 일 제목은 텔레그램 본인 채팅으로만 가고, AI(Anthropic)에는 보내지 않습니다.
 - 자세한 설계·보안 검토는 `ARCHITECTURE.md` 의 "구글 할 일", `SECURITY.md` 의 "구글 할 일".
 
+## 메일 → 할 일 버튼 (구글 할 일 추가, 기본 꺼짐)
+메일 알림 아래 `[📝 할 일로]` → 메일을 고르고 → `[오늘] [내일] [날짜 없음]` 을 누르면 그 메일 제목이 구글 할 일에 **추가**됩니다(메모에 Gmail 링크). 추가만 하고 수정·삭제·완료 처리는 못 합니다. 하루 20건까지, 같은 메일은 한 번만. AI(LLM)는 쓰지 않습니다.
+
+1. 서버 `config.json` 에 `"tasks_accounts": ["개인"]`(이미 할 일을 읽고 있다면 그대로)과 `"tasks_write": true` 를 넣습니다.
+2. **재로그인(PC)**: `python -m aide google-login --account 개인 --tasks-write` → 동의 화면에서 할 일 항목까지 체크하고 허용합니다. 끝에 "할 일은 읽기와 추가 권한이 저장되었습니다" 가 나와야 합니다.
+3. `data/google_token_personal.json` 을 서버로 복사하고 `chown aide:aide`, `chmod 600` 을 합니다.
+4. `aide-watch` 재시작 후 `python -m aide selfcheck` 의 `tasks_write` 줄이 "권한 있음" 인지, 텔레그램 `/연결` 에 "할 일 쓰기" 가 보이는지 확인합니다.
+- 권한이 없으면 눌러도 `할 일 쓰기 권한이 없어요 — PC에서 python -m aide google-login --account <계정> --tasks-write 후 토큰을 서버로 복사` 라고만 알려 줍니다.
+- 메일 계정이 `tasks_accounts` 에 있으면 그 계정에, 아니면 `tasks_accounts` 첫 계정에 추가됩니다. `[확인]`·`[무시]` 를 눌러도 `[📝 할 일로]` 는 남습니다.
+- 켜기 전에 만들어진 알림에는 버튼이 없고, 끄면 남은 버튼은 "만료된 버튼이에요" 가 됩니다.
+- 설계·보안 검토는 `ARCHITECTURE.md` 의 "메일 → 할 일", `SECURITY.md` 의 "메일 → 할 일".
+
 ## 먼저 챙기기 (nudges)
 `config.json` 에 `"nudges": ["busy", "prep"]` (기본 꺼짐)로 아침·저녁 메시지 머리줄 아래에 한 줄씩 붙입니다. LLM·새 알림 없음.
 - `busy`(아침): `⚠ 바쁜 날: 일정 6개 · 겹치는 일정 2개 · 오늘까지 할 일 3개` — 일정이 `busy_events`(기본 5)개 이상이거나 겹침이 있을 때만.

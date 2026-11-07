@@ -101,6 +101,9 @@ class Config:
     # Google Tasks (read-only, tasks.readonly): names from google_accounts whose task lists are read.
     # Empty = off. Only these accounts need the extra permission (`google-login --tasks`).
     tasks_accounts: List[str] = field(default_factory=list)
+    # Adding a task from a mail alert ("📝 할 일로" button, taskadd.py): the first thing aide WRITES. Needs
+    # tasks_accounts and the wider permission (`google-login --tasks-write`). False = off, no button.
+    tasks_write: bool = False
     # "먼저 챙겨 알리기" (ARCHITECTURE.md "먼저 챙기기"): one extra line in the morning / evening message.
     # Allowed: "busy" (morning, 바쁜 날) and "prep" (evening, 내일 준비). [] = off. No LLM, no new calls.
     nudges: List[str] = field(default_factory=list)
@@ -283,6 +286,10 @@ def _check_tasks(cfg: "Config") -> None:
             raise ConfigError(f"tasks_accounts 에 google_accounts 에 없는 이름이 있습니다: {unknown}")
     elif len(t) > 1:
         raise ConfigError("계정이 하나뿐일 때 tasks_accounts 는 항목 하나만 쓸 수 있습니다.")
+    if not isinstance(cfg.tasks_write, bool):
+        raise ConfigError("tasks_write 는 true/false 여야 합니다.")
+    if cfg.tasks_write and not t:
+        raise ConfigError("tasks_write 를 켜려면 tasks_accounts 도 필요합니다 (할 일을 추가할 계정).")
 
 
 NUDGE_NAMES = ("busy", "prep")

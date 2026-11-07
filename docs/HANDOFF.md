@@ -28,6 +28,7 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 | 15 | /기억(직접 쓴 것만 기억, 대화·중요도 판단에 반영) | 기능 | 구현 완료, PR 전 |
 | 16 | 고장 알림·/연결 | 기능 | 구현 완료, PR 전 |
 | 17 | 날씨 기반 종합 안내(출근·일정 방향·교실 운영·준비물) | 기능 | 구현 완료, PR 전 |
+| 18 | 메일 → 할 일 버튼(쓰기 권한, 2단계 승인) | 기능 | 구현 완료, PR 전 · 재로그인 필요(사용자) |
 
 - 하지 않기로 함: 4번(메일 답장 초안). 개인 일정 알림 외 "기억해서 챙기기"(한 줄 캡처 등)는 L 단계가 끝난 뒤 다시 논의.
 - 별도 정리 항목은 아래 "남은 정리" 참고(PC 예약 작업 삭제 여부 확인 등).
@@ -156,6 +157,12 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - 바뀐 파일: `health.py`·`weather_alerts.py`(신규), `netutil.py`(`get_json_with_headers`), `weather.py`(`detail`), `commands.py`, `heartbeat.py`, `morning.py`, `evening.py`, `config.py`, `__main__.py`, `config.example.json`, 테스트 3개 신규(`test_health.py`, `test_connections.py`, `test_weather_alerts.py`), 문서.
 - 테스트 966개 통과(기존 811 + 신규 155), 기존 기대값 변경 없음.
 - 남은 일: PR 병합 → 서버 반영 → `config.json` 에 `"health_alerts": true`, `"weather_alerts": true`(`weather_enabled` 필요) → `aide-watch` 재시작 → selfcheck `health`·`weather_alerts` 줄 확인 → `/연결`, 아침·저녁 미리보기 확인.
+
+## 메일 → 할 일 구현 완료 — 브랜치 feat/mail-to-task, PR 전 · 서버 반영 전 · 기본 꺼짐
+- 내용: 메일 알림의 `[📝 할 일로]` → 메일 선택 → `[오늘][내일][날짜 없음]` 두 번 승인으로 구글 할 일에 **추가**(aide 의 첫 쓰기, 수정·삭제 없음, 하루 20건, 같은 항목 한 번). LLM 안 씀. 설계: ARCHITECTURE.md "메일 → 할 일", 보안: SECURITY.md "메일 → 할 일".
+- 새 파일: `src/aide/taskadd.py`, `tests/test_mail_to_task.py`. 바뀐 파일: `google_auth.py`(`TASKS_WRITE_SCOPE`·`TASKS_READ_SCOPES`·`login(tasks_write=)`·`access_token` 대안 튜플), `gtasks.py`(읽기 권한 둘 중 하나), `inbox.py`(`t:` 분기·`tasks_write`·키보드 규칙·잠금 밖 실행), `heartbeat.py`(`mails_for`·버튼), `state.py`(`mails`·`task_adds`), `config.py`, `commands.py`(`/연결` 할 일 쓰기), `__main__.py`(`--tasks-write`·selfcheck), `config.example.json`, 문서. 기존 테스트 `tests/test_gtasks.py` 한 줄(`need_scope` 기대값이 단일 권한에서 `TASKS_READ_SCOPES` 튜플로)만 요구 변경에 맞춰 고침.
+- 테스트 1030개 통과(기존 966 + 신규 64).
+- **남은 일(사용자)**: PR 병합 → 서버 반영 → **PC 재로그인** `python -m aide google-login --account 개인 --tasks-write`(동의 화면에서 할 일 체크) → 토큰 서버 복사(chown/chmod 600) → 서버 `config.json` 에 `"tasks_write": true`(`tasks_accounts` 필요) → `aide-watch` 재시작 → selfcheck `tasks_write` 줄 "권한 있음" 확인 → 메일 알림이 올 때 `[📝 할 일로]` 로 실제 한 건 추가해 확인 → 켠 날짜를 SECURITY.md 에 기록.
 
 ## 최근 건드린 파일
 - 3b 명령: 위 섹션 참고.

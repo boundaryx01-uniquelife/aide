@@ -96,7 +96,7 @@ def gather(cfg: Config, fetch_fn: Callable = fetch, only: str = "") -> Tuple[Lis
     for acct in accts:
         try:
             token = google_auth.access_token(cfg.resolved_google_client(), acct.token_path,
-                                             need_scope=google_auth.TASKS_SCOPE)
+                                             need_scope=google_auth.TASKS_READ_SCOPES)
             tasks = fetch_fn(token)
         except (google_auth.GoogleAuthError, netutil.NetError) as e:
             log.warning("할 일 조회 실패%s: %s", f" ({acct.name})" if many else "", e)

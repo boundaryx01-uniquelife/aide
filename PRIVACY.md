@@ -4,13 +4,14 @@
 다른 사람에게 배포하거나 서비스로 제공하지 않으며, 로그인하는 사람은 소유자 본인과 소유자가 직접 등록한 테스트 계정뿐입니다.
 
 ## 어떤 정보에 접근하나
-Google 로그인 때 아래 **읽기 전용** 권한만 요청합니다.
+Google 로그인 때 아래 권한을 요청합니다. 캘린더와 Gmail 은 **읽기 전용**이고, 할 일 쓰기는 소유자가 따로 켠 경우에만 요청합니다.
 
 | 권한 | 읽는 것 | 읽지 않는 것 |
 |---|---|---|
 | Google Calendar (`calendar.readonly`) | 일정의 제목, 날짜·시각(시작·끝), 장소 | 일정 수정·삭제, 참석자 정보 |
 | Gmail (`gmail.readonly`) | 메일의 **보낸 사람과 제목**, 광고·정기 메일 표시 헤더의 유무 | 메일 본문, 첨부 파일. 메일을 읽음 처리·삭제·전송하지 않음 |
-| Google Tasks (`tasks.readonly`, 소유자가 고른 계정만) | 할 일의 **제목, 마감 날짜, 완료 여부** | 할 일의 메모·링크. 할 일을 만들거나 고치거나 완료 처리하지 않음 |
+| Google Tasks (`tasks.readonly`, 소유자가 고른 계정만) | 할 일의 **제목, 마감 날짜, 완료 여부** | 할 일의 메모·링크. 할 일을 고치거나 완료 처리하지 않음 |
+| Google Tasks 쓰기 (`tasks`, 소유자가 따로 켠 경우에만) | 소유자가 버튼으로 승인한 경우에만 할 일 추가(제목·Gmail 링크). 읽기는 위와 같음 | 추가한 것 외의 할 일을 고치거나 지우거나 완료 처리하지 않음. 소유자가 누르지 않은 메일은 추가하지 않음 |
 
 ## 어디에 쓰나
 - 읽은 일정·메일 제목·할 일 제목을 소유자 본인의 텔레그램 채팅으로 보내는 알림(아침 인사, 메일 요약, 저녁 정리)과, 소유자가 텔레그램에서 물어볼 때의 답을 만드는 데에만 씁니다.
@@ -42,5 +43,5 @@ It requests read-only access to Google Calendar (event titles, start/end times a
 solely to build notifications that are sent to the owner's own Telegram chat. Tokens and notification records are stored only on the owner's own server.
 Google user data is not sold, used for advertising, or shared, except: (1) the owner's own Telegram chat, (2) optional, off-by-default features that send
 sender/subject/event titles (importance ranking) or the owner's own typed question (free-text queries; no Google data) to the Anthropic API when the owner explicitly enables them, and (3) coarse location coordinates to Open-Meteo for weather.
-For selected accounts only, it can also read Google Tasks (titles, due dates and completion state — never notes; read-only) to include them in the owner's own notifications; task titles are never sent to any LLM service.
+For selected accounts only, it can also read Google Tasks (titles, due dates and completion state — never notes) to include them in the owner's own notifications; task titles are never sent to any LLM service. If the owner separately enables it, aide can also add a task (title and a Gmail link) to Google Tasks, but only when the owner approves it with two button presses in their own Telegram chat; it never edits, completes or deletes tasks.
 Access can be revoked at any time at https://myaccount.google.com/connections.

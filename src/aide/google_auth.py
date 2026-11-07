@@ -23,6 +23,10 @@ from . import netutil
 CAL_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 TASKS_SCOPE = "https://www.googleapis.com/auth/tasks.readonly"   # asked for only with `google-login --tasks`
+# Read + write (a superset of tasks.readonly). Asked for only with `google-login --tasks-write`; aide
+# uses it for exactly one thing: ADDING a task when the owner presses the buttons (taskadd.py).
+TASKS_WRITE_SCOPE = "https://www.googleapis.com/auth/tasks"
+TASKS_READ_SCOPES = (TASKS_SCOPE, TASKS_WRITE_SCOPE)   # reading tasks works with either one
 SCOPE = f"{CAL_SCOPE} {GMAIL_SCOPE}"  # both READ-ONLY
 AUTH_HOST, TOKEN_HOST = "accounts.google.com", "oauth2.googleapis.com"
 LOGIN_TIMEOUT = 180
@@ -123,11 +127,17 @@ def exchange_code(client, code, redirect_uri, verifier, token_path, post=netutil
     return str(r.get("scope", ""))
 
 
-def token_has_scope(token_path, scope: str) -> bool:
-    """Whether the saved login includes `scope`. Reads the file but reveals nothing from it."""
+def _scopes(scope) -> tuple:
+    return (scope,) if isinstance(scope, str) else tuple(scope)
+
+
+def token_has_scope(token_path, scope) -> bool:
+    """Whether the saved login includes `scope` (or, given a tuple, any one of them). Reads the file but
+    reveals nothing from it."""
     try:
         tok = json.loads(Path(token_path).read_text(encoding="utf-8"))
-        return scope in str(tok.get("scope", "")).split()
+        have = str(tok.get("scope", "")).split()
+        return any(s in have for s in _scopes(scope))
     except (OSError, ValueError, AttributeError):
         return False
 
@@ -159,9 +169,13 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def login(client_path, token_path, open_browser=webbrowser.open, post=netutil.post_form, say=print,
-          tasks: bool = False) -> None:
+          tasks: bool = False, tasks_write: bool = False) -> None:
     client = load_client(client_path)
-    scope = f"{SCOPE} {TASKS_SCOPE}" if tasks else SCOPE
+    scope = SCOPE
+    if tasks:
+        scope += f" {TASKS_SCOPE}"
+    if tasks_write:
+        scope += f" {TASKS_WRITE_SCOPE}"
     state = secrets.token_urlsafe(24)
     verifier, challenge = _pkce()
     handler = type("H", (_Handler,), {"result": None, "error": None, "expected_state": state})
@@ -189,7 +203,12 @@ def login(client_path, token_path, open_browser=webbrowser.open, post=netutil.po
     if handler.result is None:
         raise GoogleAuthError("시간 초과: 로그인이 완료되지 않았습니다.")
     granted = exchange_code(client, handler.result, redirect, verifier, token_path, post=post)
-    if not tasks:
+    if tasks_write:
+        if TASKS_WRITE_SCOPE in granted.split():
+            say("로그인 완료. 캘린더·Gmail 은 읽기 전용, 할 일은 읽기와 추가 권한이 저장되었습니다.")
+        else:
+            say("로그인은 됐지만 '할 일 쓰기' 권한이 허용되지 않았어요. 다시 실행해서 모든 항목에 체크해 주세요.")
+    elif not tasks:
         say("로그인 완료. 읽기 전용 권한(캘린더, Gmail)만 저장되었습니다.")
     elif TASKS_SCOPE in granted.split():
         say("로그인 완료. 읽기 전용 권한(캘린더, Gmail, 할 일)만 저장되었습니다.")
@@ -197,7 +216,8 @@ def login(client_path, token_path, open_browser=webbrowser.open, post=netutil.po
         say("로그인은 됐지만 '할 일' 권한이 허용되지 않았어요. 다시 실행해서 모든 항목에 체크해 주세요.")
 
 
-def access_token(client_path, token_path, post=netutil.post_form, now=time.time, need_scope: str = CAL_SCOPE) -> str:
+def access_token(client_path, token_path, post=netutil.post_form, now=time.time, need_scope=CAL_SCOPE) -> str:
+    """`need_scope`: one scope, or a tuple of alternatives of which the saved login needs at least one."""
     try:
         tok = json.loads(Path(token_path).read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -205,7 +225,7 @@ def access_token(client_path, token_path, post=netutil.post_form, now=time.time,
     except (ValueError, OSError):
         raise GoogleAuthError("토큰 파일을 읽을 수 없습니다.") from None
     granted = tok.get("scope") or CAL_SCOPE  # logins made before Gmail support only had calendar
-    if need_scope not in granted.split():
+    if not any(s in granted.split() for s in _scopes(need_scope)):
         raise GoogleAuthError("이 기능에 필요한 권한이 없습니다. `python -m aide google-login` 을 다시 실행하세요.")
     if tok.get("access_token") and float(tok.get("expires_at", 0)) - now() > 60:
         return tok["access_token"]

@@ -9,7 +9,7 @@ from typing import Callable, List, Optional, Sequence
 from . import accounts, gmail, google_auth, health, inbox, llm, netutil, rules, telegram
 from .checks import git_dirty, market_news, news_keywords, notice_pages
 from .config import Config
-from .models import Finding
+from .models import Finding, clean
 from .state import State, StateLocked, locked
 
 log = logging.getLogger("aide.heartbeat")
@@ -183,6 +183,20 @@ def targets_for(batch: Sequence[Finding], folded: Sequence[Finding]) -> List[dic
     return out
 
 
+def mails_for(batch: Sequence[Finding]) -> List[dict]:
+    """Mail the owner may turn into a task from this digest (mail -> task buttons): the shown mail items,
+    max MAX_TARGETS. The title is the already-cleaned one; the link is kept only if it is a Gmail address."""
+    out: List[dict] = []
+    for f in batch:
+        if f.source != "mail":
+            continue
+        out.append({"k": f.key, "t": clean(f.title, 100),
+                    "u": f.url if f.url.startswith(telegram.URL_PREFIX) else "", "a": f.account})
+        if len(out) >= MAX_TARGETS:
+            break
+    return out
+
+
 def load_rules(cfg: Config) -> Optional["rules.Rules"]:
     return rules.Rules(rules.path_for(cfg.resolved_state_path())) if cfg.rules_enabled else None
 
@@ -290,10 +304,11 @@ def run(
             new = sorted(new, key=lambda f: -f.priority)  # stable: pinned, then high ... low last; a no-op when nothing ranked
             batch = new[: cfg.max_items_per_digest]
             targets = targets_for(batch, folded) if rule_set is not None else []
+            mails = mails_for(batch) if cfg.tasks_write else []
             digest_id = secrets.token_hex(4)
             digest = format_digest(new, now, cfg.max_items_per_digest, folded)
             try:
-                sender(digest, token=token, chat_id=chat_id, buttons=inbox.buttons_for(digest_id, with_clean=bool(targets)))
+                sender(digest, token=token, chat_id=chat_id, buttons=inbox.buttons_for(digest_id, with_clean=bool(targets), with_task=bool(mails)))
             except telegram.TelegramError as e:
                 log.error("전송 실패: %s (다음 점검에서 재시도)", e)
                 return 1
@@ -302,7 +317,7 @@ def run(
                 state.mark(k, now)
             if mark_slot and len(new) <= len(batch):
                 state.mark(slot, now)  # leftovers (if any) keep the slot open for the next check
-            state.add_digest(digest_id, all_keys, now, targets)
+            state.add_digest(digest_id, all_keys, now, targets, mails)
             state.prune(now)
             state.save()
             log.info("%d건 전송 완료", len(batch))

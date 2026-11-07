@@ -42,6 +42,7 @@
   "chat_max_per_day": 20,
   "memory_enabled": false,
   "tasks_accounts": [],
+  "tasks_write": false,
   "nudges": [],
   "busy_events": 5,
   "news_hours": [],
