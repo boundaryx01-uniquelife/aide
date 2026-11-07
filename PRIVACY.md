@@ -8,7 +8,7 @@ Google 로그인 때 아래 **읽기 전용** 권한만 요청합니다.
 
 | 권한 | 읽는 것 | 읽지 않는 것 |
 |---|---|---|
-| Google Calendar (`calendar.readonly`) | 일정의 제목, 날짜·시각 | 일정 수정·삭제, 참석자 정보 |
+| Google Calendar (`calendar.readonly`) | 일정의 제목, 날짜·시각(시작·끝), 장소 | 일정 수정·삭제, 참석자 정보 |
 | Gmail (`gmail.readonly`) | 메일의 **보낸 사람과 제목**, 광고·정기 메일 표시 헤더의 유무 | 메일 본문, 첨부 파일. 메일을 읽음 처리·삭제·전송하지 않음 |
 | Google Tasks (`tasks.readonly`, 소유자가 고른 계정만) | 할 일의 **제목, 마감 날짜, 완료 여부** | 할 일의 메모·링크. 할 일을 만들거나 고치거나 완료 처리하지 않음 |
 
@@ -38,7 +38,7 @@ Google 에서 읽은 정보는 아래 외에는 누구에게도 팔거나 공유
 
 ## Summary (English)
 aide is a personal assistant that one individual (the repository owner) runs for their own use; it is not distributed or offered as a service.
-It requests read-only access to Google Calendar (event titles and times) and Gmail (message sender and subject headers only — never message bodies or attachments)
+It requests read-only access to Google Calendar (event titles, start/end times and locations) and Gmail (message sender and subject headers only — never message bodies or attachments)
 solely to build notifications that are sent to the owner's own Telegram chat. Tokens and notification records are stored only on the owner's own server.
 Google user data is not sold, used for advertising, or shared, except: (1) the owner's own Telegram chat, (2) optional, off-by-default features that send
 sender/subject/event titles (importance ranking) or the owner's own typed question (free-text queries; no Google data) to the Anthropic API when the owner explicitly enables them, and (3) coarse location coordinates to Open-Meteo for weather.

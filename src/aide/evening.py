@@ -45,11 +45,11 @@ def _gather(cfg: Config, now: datetime, fetch_events, fetch_week, fetch):
             first = (now + timedelta(days=1)).date()
             events, failed, total = accounts.gather_events(
                 cfg, lambda token: fetch_week(token, first, 7),
-                lambda e: (e.day or first, e.when != "종일", e.when))
+                lambda e: (e.day or first,) + gcal.order(e))
         else:
             events, failed, total = accounts.gather_events(
                 cfg, lambda token: fetch_events(token, now + timedelta(days=1)),
-                lambda e: (e.when != "종일", e.when))
+                gcal.order)
     rows = []
     if cfg.notice_pages:
         days = WEEK_DEADLINE_DAYS if weekly else DEADLINE_DAYS
@@ -68,13 +68,13 @@ def _calendar_section(cfg: Config, now: datetime, events, failed, total) -> List
         if not events and not failed:
             out.append("일정이 없어요.")
         last: Optional[date] = None
-        for e in events:
+        for e, text in zip(events, gcal.lines(events)):
             if e.day != last:
                 last = e.day
                 out.append(f"{e.day:%m/%d}({WEEKDAYS[e.day.weekday()]})" if e.day else "")
-            out.append(f"  • {e.when} {e.title}")
+            out.append(f"  • {text}")
     else:
-        out += [f"• {e.when} {e.title}" for e in events]
+        out += [f"• {t}" for t in gcal.lines(events)]
         if not events and not failed:
             out.append("일정이 없어요.")
     out += accounts.failure_lines(failed, total)

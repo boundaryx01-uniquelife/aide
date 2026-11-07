@@ -40,7 +40,7 @@ def _gather(cfg: Config, now: datetime, fetch_weather, fetch_events):
     events, failed, total = [], [], 0
     if cfg.calendar_enabled:
         events, failed, total = accounts.gather_events(
-            cfg, lambda token: fetch_events(token, now), lambda e: (e.when != "종일", e.when))
+            cfg, lambda token: fetch_events(token, now), gcal.order)
     return weather_result, events, failed, total
 
 
@@ -53,7 +53,7 @@ def _today_section(cfg: Config, weather_result, events, failed, total) -> List[s
     if cfg.calendar_enabled:
         out.append("■ 오늘 일정")
         if events:
-            out += [f"• {e.when} {e.title}" for e in events]
+            out += [f"• {t}" for t in gcal.lines(events)]
         elif not failed:
             out.append("일정이 없어요.")
         out += accounts.failure_lines(failed, total)
