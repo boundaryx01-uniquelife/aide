@@ -5,7 +5,7 @@ import logging
 import unicodedata
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Iterable, Iterator, List, Optional, Tuple
 from urllib.parse import quote, urlencode
@@ -42,6 +42,10 @@ class Event:
     title: str
     day: Optional[date] = None   # KST calendar day it starts on (None only for hand-made events)
     accounts: Tuple[str, ...] = ()   # which Google account(s) this came from; filled by accounts.gather_events
+    end: str = ""                    # "HH:MM" end of a timed event ("" = unknown / all-day)
+    end_day: Optional[date] = None   # last day the event covers (inclusive); None = unknown
+    location: str = ""               # untrusted text -> clean(40)
+    began: Optional[date] = None     # real start day when `day` was moved to the first queried day
 
 
 def day_bounds(now: datetime):
@@ -56,7 +60,10 @@ def _parse(item: dict):
         if a.get("self") and a.get("responseStatus") == "declined":
             return None
     title = clean(item.get("summary", ""), 80) or "(제목 없음)"
+    loc = item.get("location")
+    loc = clean(loc, 40) if isinstance(loc, str) else ""
     st = item.get("start") or {}
+    en = item.get("end") or {}
     if "dateTime" in st:
         try:
             dt = datetime.fromisoformat(st["dateTime"].replace("Z", "+00:00"))
@@ -65,12 +72,33 @@ def _parse(item: dict):
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=KST)
         k = dt.astimezone(KST)
-        return Event(k.strftime("%H:%M"), title, k.date())
+        end, end_day = "", None
+        try:
+            et = datetime.fromisoformat(str(en["dateTime"]).replace("Z", "+00:00"))
+            if et.tzinfo is None:
+                et = et.replace(tzinfo=KST)
+            ek = et.astimezone(KST)
+            if ek >= k:
+                end = ek.strftime("%H:%M")
+                end_day = ek.date()
+                if ek.hour == 0 and ek.minute == 0 and ek > k:
+                    end_day = ek.date() - timedelta(days=1)   # ends exactly at midnight -> previous day
+        except (KeyError, ValueError, TypeError):
+            end, end_day = "", None
+        return Event(k.strftime("%H:%M"), title, k.date(), end=end, end_day=end_day, location=loc)
     if "date" in st:
         try:
-            return Event("종일", title, date.fromisoformat(st["date"]))
+            d = date.fromisoformat(st["date"])
         except ValueError:
             return None
+        end_day = d
+        try:
+            last = date.fromisoformat(en["date"]) - timedelta(days=1)   # Google's end.date is exclusive
+            if last >= d:
+                end_day = last
+        except (KeyError, ValueError, TypeError):
+            pass
+        return Event("종일", title, d, end_day=end_day, location=loc)
     return None
 
 
@@ -112,7 +140,7 @@ def _query_one(token, cal: str, lo: datetime, hi: datetime, max_results: int, ge
     q = urlencode({
         "timeMin": lo.isoformat(), "timeMax": hi.isoformat(), "singleEvents": "true",
         "orderBy": "startTime", "maxResults": max_results,
-        "fields": "items(summary,status,start,attendees(self,responseStatus))",
+        "fields": "items(summary,status,start,end,location,attendees(self,responseStatus))",
     })
     data = get(f"{BASE}/calendars/{quote(cal, safe='')}/events?{q}", headers={"Authorization": f"Bearer {token}"})
     items = data.get("items", []) if isinstance(data, dict) else []
@@ -143,16 +171,96 @@ def _query(token, lo: datetime, hi: datetime, max_results: int, get) -> List[Eve
     return out
 
 
+def order(e: Event) -> tuple:
+    """Sort key within a day: all-day first, then still-running events, then timed ones, then by start time."""
+    return (0 if e.when == "종일" else 1 if _continuing(e) else 2, e.when)
+
+
+def _shift(events: List[Event], first: date) -> List[Event]:
+    """An event that began before `first` is shown on `first`; its real start day is kept in `began`."""
+    return [replace(e, day=first, began=e.day) if e.day and e.day < first else e for e in events]
+
+
 def today_events(token: str, now: datetime, get: Callable = netutil.get_json) -> List[Event]:
     lo, hi = day_bounds(now)
-    events = _query(token, lo, hi, MAX_EVENTS, get)
-    return sorted(events, key=lambda e: (e.when != "종일", e.when))
+    events = _shift(_query(token, lo, hi, MAX_EVENTS, get), lo.date())
+    return sorted(events, key=order)
 
 
 def events_between(token: str, first: date, days: int, get: Callable = netutil.get_json) -> List[Event]:
     """Events from `first` for `days` days, ordered by day, all-day first. A multi-day event that
-    began before `first` is shown on `first`."""
+    began before `first` is shown on `first` as "in progress" (its real start is kept in `began`)."""
     lo = datetime(first.year, first.month, first.day, tzinfo=KST)
-    events = _query(token, lo, lo + timedelta(days=days), 50, get)
-    fixed = [Event(e.when, e.title, max(e.day, first)) if e.day else e for e in events]
-    return sorted(fixed, key=lambda e: (e.day or first, e.when != "종일", e.when))
+    events = _shift(_query(token, lo, lo + timedelta(days=days), 50, get), first)
+    return sorted(events, key=lambda e: (e.day or first,) + order(e))
+
+
+# ---- display ----------------------------------------------------------------------------------
+
+def _md(d: date) -> str:
+    return f"{d:%m/%d}"
+
+
+def _continuing(e: Event, on_day: Optional[date] = None) -> bool:
+    cur = on_day or e.day
+    orig = e.began or e.day
+    return bool(cur and orig and cur > orig)
+
+
+def line(e: Event, on_day: Optional[date] = None) -> str:
+    """One calendar line without the leading bullet (the single place that formats an event)."""
+    cur = on_day or e.day
+    allday = e.when == "종일"
+    multi = bool(e.end_day and e.day and e.end_day > e.day)
+    if _continuing(e, on_day):
+        if e.end_day is None:
+            head = "(진행 중)"
+        elif allday:
+            head = f"(진행 중, ~{_md(e.end_day)})"
+        else:
+            head = f"(진행 중, ~{_md(e.end_day)} {e.end})" if e.end else f"(진행 중, ~{_md(e.end_day)})"
+    elif allday:
+        head = f"종일 ~{_md(e.end_day)}" if multi else "종일"
+    elif not e.end:
+        head = e.when
+    elif multi:
+        head = f"{e.when}~{_md(e.end_day)} {e.end}"
+    else:
+        head = f"{e.when}~{e.end}"
+    out = f"{head} {e.title}"
+    return f"{out} @{e.location}" if e.location else out
+
+
+def _minutes(t: str) -> int:
+    return int(t[:2]) * 60 + int(t[3:5])
+
+
+def _span(e: Event) -> Optional[Tuple[int, int]]:
+    if e.when == "종일" or not e.end or e.end_day is None or e.day is None or _continuing(e):
+        return None
+    start = _minutes(e.when)
+    if e.end_day > e.day or e.end == "00:00":
+        stop = 1440
+    else:
+        stop = _minutes(e.end)
+    return (start, stop) if stop > start else None
+
+
+def overlaps(events: List[Event]) -> set:
+    """Indexes of events whose [start, end) overlaps another timed event of the same display day.
+    All-day, in-progress and end-less events are ignored; touching (10-11 and 11-12) is not overlap."""
+    spans = [(i, e.day, _span(e)) for i, e in enumerate(events)]
+    spans = [x for x in spans if x[2] is not None]
+    hit = set()
+    for a in range(len(spans)):
+        for b in range(a + 1, len(spans)):
+            (i, di, si), (j, dj, sj) = spans[a], spans[b]
+            if di == dj and si[0] < sj[1] and sj[0] < si[1]:
+                hit.update((i, j))
+    return hit
+
+
+def lines(events: List[Event]) -> List[str]:
+    """`line()` for each event, with " ⚠ 겹침" appended where it overlaps another one."""
+    ov = overlaps(events)
+    return [line(e) + (" ⚠ 겹침" if i in ov else "") for i, e in enumerate(events)]

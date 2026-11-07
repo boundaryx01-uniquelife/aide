@@ -193,7 +193,7 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 - **`commands.py` 확장**: `render_week(first, days, only, keyword)`, `render_due(days, keyword)`, `render_mail(days, only, keyword)`, 새 `render_weather(offset)`, 새 명령 `/날씨`(`weather`). 인자는 모두 선택이라 `/명령` 의 동작은 그대로다. 키워드는 가져온 결과를 로컬에서 거르는 데만 쓴다. `accounts.gather_events(only=...)` 는 한 계정만 읽되 여러 계정 보기의 `[이름]` 표시를 유지한다. `weather.on_day(offset)` 은 오늘부터 6일 뒤까지.
 - **`inbox.py`**: `process_updates(chat_max_per_day=...)` 가 문장을 `ChatRequest` 로 `to_run` 에 넣는다(0 이면 꺼짐). 묶음당 3개는 명령과 공유하고, 시간당(`chat.MAX_PER_HOUR`, `State.chat_times`)과 하루(`State.chat_calls`) 예산은 대화 전용이다. 안내 답장은 `Notice` 로 같은 목록에 담겨 잠금을 푼 뒤 보내지고(종류당 묶음당 1번), 시작 offset 보다 작은 번호의 글자 메시지는 재전달로 보고 건너뛴다. `poll_once` 는 긴 대기가 끝난 **뒤** 시각을 잡고, 잠금 밖에서 `chat.answer_full` 을 호출한 뒤 답이 만들어지지 않은 건(`nokey`/`net`/예외)은 잠금을 다시 잡아 `State.refund_chat_call` 로 환불한다. API 키는 `ANTHROPIC_API_KEY` 환경변수.
 - **설정**: `chat_enabled: false`, `chat_max_per_day: 20`. 켜려면 `llm_enabled` 와 `commands` 가 필요하다(`load_config` 가 검사). `selfcheck` 에 한 줄. `COMMAND_NAMES` 에 `날씨` 추가.
-- **한계**: 날짜 범위 일정은 오늘-62일~+60일, 최대 31일. 메일은 최근 7일까지, 키워드 검색은 최신 안 읽은 20건 안(제목·보낸 사람 표시만, 계정 라벨은 매칭 대상이 아님). 날씨는 오늘부터 6일 뒤까지, 하루씩, 설정된 위치 기준. 마감은 오늘부터 N일(시작일 무시). 일정은 캘린더당 50건에서 잘린다(알림 없음, B2 후보). 일정에는 종료 시각·기간·장소가 없다(B1 후보). 오전/오후는 구분하지 못하고 문장에 그런 말이 있으면 알린다. 대화는 문장 하나씩이며 이전 대화를 기억하지 않는다.
+- **한계**: 날짜 범위 일정은 오늘-62일~+60일, 최대 31일. 메일은 최근 7일까지, 키워드 검색은 최신 안 읽은 20건 안(제목·보낸 사람 표시만, 계정 라벨은 매칭 대상이 아님). 날씨는 오늘부터 6일 뒤까지, 하루씩, 설정된 위치 기준. 마감은 오늘부터 N일(시작일 무시). 일정은 캘린더당 50건에서 잘린다(알림 없음, B2 후보). 오전/오후는 구분하지 못하고 문장에 그런 말이 있으면 알린다. 대화는 문장 하나씩이며 이전 대화를 기억하지 않는다.
 
 ## 구글 할 일 — 구현 완료 2026-10-22, 서버 배포 전
 - **`gtasks.py`**: `Task(title, due, list_title, account)`, `fetch(token)`(목록 → 목록별 할 일, 한 목록 실패는 건너뛰고 전부 실패면 예외), `gather(cfg, fetch_fn, only)`(`tasks_accounts` 계정마다 `access_token(need_scope=TASKS_SCOPE)` → 읽기, 한 계정 실패가 다른 계정을 막지 않음, 계정이 둘 이상이면 `[이름]` 표시), `split`/`when_text`/`task_line`/`lines`(표시), `section(cfg, now, kind)`(아침·저녁·일요일 저녁 구역, 끄면 `[]`, 예외 안 냄).
@@ -202,3 +202,13 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 - **권한**: `google_auth.TASKS_SCOPE`. `login(tasks=True)` 만 이 권한을 더해 요청하고, 허용 여부를 확인해 알려 준다. `token_has_scope()` 로 `selfcheck` 가 "권한 있음/없음"을 보여 준다(토큰 내용은 출력 안 함). 설정 `tasks_accounts`(google_accounts 이름 목록, 기본 `[]` = 꺼짐).
 - 아침·저녁은 `fetch_tasks=` 를 받아 시험에서 가짜로 바꿀 수 있고, 조회는 잠금 밖에서 한다.
 - **한계**: 완료 처리·추가는 못 한다(읽기 전용). 하위 작업은 각자의 마감일로 나온다(부모와 묶어 보여 주지 않음). 반복 할 일은 구글이 만든 다음 항목만 보인다.
+
+## 일정 상세 (B1) — 구현 완료 2026-11-07, 서버 배포 전
+- **`gcal.Event`** 끝에 필드 추가(기본값 있음): `end`("HH:MM", 시간 일정만), `end_day`(마지막 날), `location`(`clean` 40자), `began`(`day` 를 조회 첫날로 옮겼을 때 원래 시작일). 조회 `fields` 에 `end,location` 추가.
+- **파싱**: 시간 일정은 end.dateTime 을 KST 로 바꿔 쓰고, 정확히 00:00 이면 `end_day` 는 전날. 종일 일정의 end.date 는 구글이 배타적(다음 날)이라 하루를 빼서 `end_day`. 끝이 이상하면 끝 정보만 비우고 일정은 그대로 둔다.
+- **표시는 `gcal.line(e, on_day)` 한 곳**: `09:00~10:30 제목`, `18:00~10/22 10:00 제목`, `종일 ~10/23 제목`, 이어지는 일정은 `(진행 중, ~10/23) 제목`(가짜 시작 시각 없음), 장소는 끝에 ` @장소`. `gcal.lines(events)` 는 여기에 겹침 표시를 붙인다. `commands.render_today/render_week`, 아침, 저녁(평일·일요일)이 모두 이것을 쓴다.
+- **어제 시작 일정 버그**: `today_events` 와 `events_between` 이 같은 `_shift` 로 조회 첫날보다 앞서 시작한 일정의 `day` 를 첫날로 두고 `began` 에 원래 시작일을 보존한다. 정렬은 `gcal.order`(종일 → 진행 중 → 시간 일정).
+- **겹침**: `gcal.overlaps(events)` 는 같은 표시 날짜의 시간 일정 중 끝 시각이 있는 것끼리 [시작, 끝) 이 겹치면 인덱스 집합에 넣는다. 맞닿음·종일·진행 중·끝 없음은 제외. 로컬 계산, LLM 안 씀. 다른 날에 걸친 일정은 시작일 24:00 까지로 본다.
+- **병합**: `accounts.gather_events` 키는 그대로 (day, when, title). 같은 일정이 두 계정에 있으면 끝·장소가 있는 쪽 정보를 채운다. 표시는 `09:00~10:00 [개인·학교] 제목 @장소`.
+- **LLM**: 2b 후보(`when` + `title`)는 그대로. 끝 시각·장소는 보내지 않는다(테스트로 고정).
+- **한계**: 빈 시간 찾기 없음. 종일 일정은 겹침 대상이 아님. 2b 후보와 "오늘의 핵심" 줄은 `when`(시작 시각)을 그대로 써서, 이어지는 일정이면 원래 시작 시각이 보인다. 일정은 캘린더당 50건 상한 그대로.

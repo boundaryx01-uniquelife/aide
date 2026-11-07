@@ -50,6 +50,9 @@ def gather_events(cfg: Config, call: Callable[[str], List[Event]], key,
             hit = first_of.get(k)
             if many and hit is not None and acct.name not in hit[1]:
                 hit[1].append(acct.name)       # same event seen in another account
+                if (not hit[0].end and e.end) or (not hit[0].location and e.location):   # keep the richer details
+                    hit[0] = replace(hit[0], end=hit[0].end or e.end, end_day=hit[0].end_day or e.end_day,
+                                     location=hit[0].location or e.location)
                 continue
             entry = [e, [acct.name]]
             entries.append(entry)

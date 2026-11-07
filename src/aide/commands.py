@@ -127,10 +127,10 @@ def render_today(cfg: Config, now: datetime, *, fetch_weather=weather.today, fet
             lines.append("날씨를 불러오지 못했어요.")
     if cfg.calendar_enabled:
         events, failed, total = accounts.gather_events(
-            cfg, lambda token: fetch_events(token, now), lambda e: (e.when != "종일", e.when))
+            cfg, lambda token: fetch_events(token, now), gcal.order)
         lines.append("일정:")
         if events:
-            lines += [f"• {e.when} {e.title}" for e in events]
+            lines += [f"• {t}" for t in gcal.lines(events)]
         elif not failed:
             lines.append("없어요.")
         lines += accounts.failure_lines(failed, total)
@@ -146,17 +146,17 @@ def render_week(cfg: Config, now: datetime, *, fetch_week=gcal.events_between,
     first = first or now.date()
     events, failed, total = accounts.gather_events(
         cfg, lambda token: [e for e in fetch_week(token, first, days) if _match(keyword, e.title)],
-        lambda e: (e.day or first, e.when != "종일", e.when), only)
+        lambda e: (e.day or first,) + gcal.order(e), only)
     last_day = first + timedelta(days=days - 1)
     lines = [f"■ 일정 ({first:%m/%d})" if days == 1 else f"■ 일정 ({first:%m/%d}~{last_day:%m/%d})"]
     if not events and not failed:
         lines.append("없어요.")
     last = None
-    for e in events:
+    for e, text in zip(events, gcal.lines(events)):
         if e.day != last:
             last = e.day
             lines.append(f"{e.day:%m/%d}({WEEKDAYS[e.day.weekday()]})" if e.day else "")
-        lines.append(f"  • {e.when} {e.title}")
+        lines.append(f"  • {text}")
     lines += accounts.failure_lines(failed, total)
     return "\n".join(lines)
 
