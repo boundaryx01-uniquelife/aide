@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable, List, Optional, Tuple, Union
 
-from . import chat, cleanup, commands, rules as rules_mod, telegram
+from . import chat, cleanup, commands, memory as memory_mod, rules as rules_mod, taskadd, telegram
 from .config import Config
 from .state import State, StateLocked, locked
 
@@ -64,10 +64,21 @@ def release_watcher(cfg: Config) -> None:
         pass
 
 
-def buttons_for(digest_id: str, with_clean: bool = False):
+def extra_buttons(digest_id: str, with_clean: bool = False, with_task: bool = False):
+    """The buttons that outlive 확인/무시: [🧹 정리] (L1) and [📝 할 일로] (mail -> task), in one row."""
+    row = []
+    if with_clean:
+        row.append(("🧹 정리", f"m:{digest_id}:open"))
+    if with_task:
+        row.append(("📝 할 일로", f"t:{digest_id}:open"))
+    return row
+
+
+def buttons_for(digest_id: str, with_clean: bool = False, with_task: bool = False):
     rows = [[("✅ 확인", f"d:{digest_id}:ok"), ("🔕 무시", f"d:{digest_id}:skip"), ("⏰ 나중에", f"d:{digest_id}:later")]]
-    if with_clean:   # stage L1: only when this digest lists at least one mail sender
-        rows.append([("🧹 정리", f"m:{digest_id}:open")])
+    extra = extra_buttons(digest_id, with_clean, with_task)   # L1: only when the digest lists a mail sender; task: only with mails
+    if extra:
+        rows.append(extra)
     return rows
 
 
@@ -125,16 +136,63 @@ def _describe_message(u, allowed_chat_id: str) -> str:
 @dataclass(frozen=True)
 class Notice:
     """A short notice for the owner ("늦게 받은 명령…", "모르는 명령이에요"). Collected while the state
-    lock is held and sent only after it is released, at most one of each kind per batch."""
+    lock is held and sent only after it is released, at most one of each kind per batch.
+    `/기억` replies carry inline `buttons` (rows of (label, callback data))."""
     text: str
+    buttons: Optional[list] = None
 
 
-def _reply(api, token: str, chat_id: str, text: str) -> None:
+def _reply(api, token: str, chat_id: str, text: str, buttons=None) -> None:
     """Best-effort plain-text reply (notices, "모르는 명령이에요", ...). Never raises."""
     try:
-        api.send(text, token=token, chat_id=chat_id)
+        if buttons:
+            api.send(text, token=token, chat_id=chat_id, buttons=buttons)
+        else:
+            api.send(text, token=token, chat_id=chat_id)
     except telegram.TelegramError as e:
         log.info("안내 전송 실패: %s", e)
+
+
+def _memory_command(cmd: Tuple[str, str], memory, now: datetime) -> Notice:
+    """Run one `/기억` command against the in-memory store (the caller saves it under the lock)."""
+    kind, body = cmd
+    if kind == "list":
+        text, buttons = memory_mod.render_list(memory)
+        log.info("기억 목록 조회 (%d개)", len(memory.items))
+        return Notice(text, buttons or None)
+    status, item = memory.add(body, now)
+    log.info("기억 추가 시도: %s (%d개)", status, len(memory.items))   # never the text itself
+    if status == "ok":
+        text, buttons = memory_mod.added_reply(item)
+        return Notice(text, buttons)
+    if status == "dup":
+        return Notice(f"이미 기억하고 있어요: {item['text']}")
+    if status == "full":
+        return Notice(memory_mod.FULL)
+    return Notice(memory_mod.EMPTY_BODY)
+
+
+def _memory_button(data: str, cq: dict, memory, *, token: str, chat_id: str, api) -> str:
+    """`k:<id>:undo` / `k:<id>:del` (already verified as the owner's press). Idempotent: a repeat
+    press finds nothing and says "이미 지웠어요". Returns the toast; the caller saves `memory`."""
+    m = memory_mod.CALLBACK_RE.match(data)
+    if not m:
+        return "알 수 없는 버튼이에요"
+    rid, action = m.group(1), m.group(2)
+    removed = memory.remove(rid)
+    log.info("기억 삭제 (%s): %s (%d개 남음)", action, "지움" if removed else "이미 없음", len(memory.items))
+    message_id = (cq.get("message") or {}).get("message_id")
+    try:
+        if action == "undo":
+            text = f"취소했어요: {removed['text']}" if removed else memory_mod.GONE
+            api.edit_text(token, chat_id, int(message_id), text, None)
+        else:   # the list message is redrawn so the numbers and buttons match what is left
+            text, buttons = memory_mod.render_list(memory)
+            if len(text) <= 3800:
+                api.edit_text(token, chat_id, int(message_id), text, buttons or None)
+    except (telegram.TelegramError, TypeError, ValueError, AttributeError) as e:
+        log.info("메시지 수정 실패(기록은 반영됨): %s", e)
+    return memory_mod.DELETED if removed else memory_mod.GONE
 
 
 def process_updates(
@@ -148,7 +206,9 @@ def process_updates(
     api=telegram,
     rule_set=None,
     chat_max_per_day: int = 0,
-) -> Tuple[int, List[Union[str, chat.ChatRequest, Notice]]]:
+    memory=None,
+    tasks_write: bool = False,
+) -> Tuple[int, List[Union[str, chat.ChatRequest, Notice, taskadd.TaskAddRequest]]]:
     """Apply button presses to `state`, and decide which stage-3b commands may run.
 
     Returns (how many updates were acted on, canonical command names to execute
@@ -170,14 +230,25 @@ def process_updates(
     Telegram from inside the lock, and a flood of junk produces at most one notice per kind.
     A message older than the offset this call started with is a redelivery (a second poller
     read it first): it is skipped so it is never run, billed or answered twice.
+
+    `/기억` (only with a `memory_mod.Memory` passed in, i.e. memory_enabled): an owner-typed
+    `/기억 <글>` is stored and `/기억` lists, under the same lock, limits and staleness rules as the
+    other commands. Its replies are Notices (sent after the lock). Nothing but the owner's own
+    message text is ever stored; the text is never logged.
+
+    `tasks_write` (mail -> task buttons `t:...`): the buttons only choose a mail and a due date. The final
+    press is checked here (digest known, not added before, under today's limit) and handed back as a
+    `taskadd.TaskAddRequest`; the Google call itself is made by `poll_once` after the lock is released.
     """
     now = now or datetime.now()
     enabled_commands = list(enabled_commands)
     handled = ignored = 0
-    to_run: List[Union[str, chat.ChatRequest, Notice]] = []
+    to_run: List[Union[str, chat.ChatRequest, Notice, taskadd.TaskAddRequest]] = []
+    task_pending: set = set()
     batch_count = 0
     start_offset = state.offset
     stale_skipped = limited = chat_limited = chat_busy = unknown_noted = long_noted = False
+    mem_long_noted = False
     for u in updates:
         uid = u.get("update_id") if isinstance(u, dict) else None
         if isinstance(uid, int):
@@ -193,6 +264,31 @@ def process_updates(
                 continue
             cq = u["callback_query"]
             data = cq.get("data") if isinstance(cq.get("data"), str) else ""
+            if memory_mod.is_data(data):
+                # `/기억` buttons. With memory switched off: the same "expired" answer, nothing is read or changed.
+                toast = memory_mod.EXPIRED
+                if memory is not None:
+                    toast = _memory_button(data, cq, memory, token=token, chat_id=str(allowed_chat_id), api=api)
+                    handled += 1
+                try:
+                    api.answer_callback(token, str(cq.get("id", "")), toast)
+                except telegram.TelegramError as e:
+                    log.info("토스트 표시 실패: %s", e)
+                continue
+            if taskadd.is_task_data(data):
+                # Mail -> task buttons. With the feature off: "expired", nothing is read or changed.
+                toast = taskadd.EXPIRED_OFF
+                if tasks_write:
+                    toast, request = taskadd.handle(data, cq, state=state, token=token, chat_id=str(allowed_chat_id),
+                                                    api=api, now=now, pending=task_pending)
+                    if request is not None:
+                        to_run.append(request)
+                    handled += 1
+                try:
+                    api.answer_callback(token, str(cq.get("id", "")), toast)
+                except telegram.TelegramError as e:
+                    log.info("토스트 표시 실패: %s", e)
+                continue
             if cleanup.is_cleanup_data(data):
                 # Stage L1 buttons. With rules switched off they get the same "expired"
                 # answer as any stale button -- nothing is read or changed.
@@ -222,11 +318,12 @@ def process_updates(
             except telegram.TelegramError as e:
                 log.info("토스트 표시 실패(오래된 버튼이면 정상, 기록은 반영됨): %s", e)
             if m and (outcome in REPLIES or outcome == "dup"):  # also on a repeat press: tidy up a stuck keyboard
-                keep_clean = rule_set is not None and bool((state.digests.get(m.group(1)) or {}).get("targets"))
+                rec = state.digests.get(m.group(1)) or {}
+                keep = extra_buttons(m.group(1), rule_set is not None and bool(rec.get("targets")),
+                                     tasks_write and bool(rec.get("mails")))
                 try:
-                    if keep_clean:   # stage L1: leave only the 정리 button so the owner can still use it
-                        api.set_buttons(token, str(allowed_chat_id), int(cq["message"]["message_id"]),
-                                        [[("🧹 정리", f"m:{m.group(1)}:open")]])
+                    if keep:   # leave only 정리 / 할 일로 so the owner can still use them
+                        api.set_buttons(token, str(allowed_chat_id), int(cq["message"]["message_id"]), [keep])
                     else:
                         api.clear_buttons(token, str(allowed_chat_id), int(cq["message"]["message_id"]))
                 except (telegram.TelegramError, KeyError, TypeError, ValueError) as e:
@@ -242,6 +339,24 @@ def process_updates(
                 log.info("이미 읽은 메시지가 다시 와서 건너뜀")
                 continue
             text = u["message"]["text"]
+            mem_cmd = memory_mod.parse_command(text) if memory is not None else None
+            if mem_cmd is not None:
+                if len(text) > memory_mod.MAX_MESSAGE:
+                    if not mem_long_noted:
+                        mem_long_noted = True
+                        to_run.append(Notice(memory_mod.TOO_LONG))
+                elif commands.is_stale(u, now.timestamp()):
+                    stale_skipped = True
+                    log.info("오래된 명령 건너뜀: 기억")
+                elif batch_count >= commands.MAX_PER_BATCH or state.commands_in_last_hour(now) >= commands.MAX_PER_HOUR:
+                    limited = True
+                    log.info("명령 제한으로 건너뜀: 기억")
+                else:
+                    batch_count += 1
+                    state.record_command(now)
+                    to_run.append(_memory_command(mem_cmd, memory, now))
+                    handled += 1
+                continue
             name = commands.resolve(text, enabled_commands)
             if name is None and chat_max_per_day > 0 and chat.looks_like_chat(text):
                 if len(text) > chat.MAX_CHAT_LEN:
@@ -318,17 +433,28 @@ def poll_once(
     with locked(path):
         state = State(path)  # re-read: heartbeat may have written meanwhile
         rule_set = rules_mod.Rules(rules_mod.path_for(path)) if cfg.rules_enabled else None
+        memory = memory_mod.Memory(memory_mod.path_for(path)) if cfg.memory_enabled else None
         handled, to_run = process_updates(
             updates, state, token=token, allowed_chat_id=chat_id, enabled_commands=cfg.commands, now=now, api=api,
-            rule_set=rule_set, chat_max_per_day=cfg.chat_max_per_day if cfg.chat_enabled else 0)
+            rule_set=rule_set, chat_max_per_day=cfg.chat_max_per_day if cfg.chat_enabled else 0, memory=memory,
+            tasks_write=cfg.tasks_write)
         if rule_set is not None:
             rule_set.save()   # same lock as the state: one writer at a time
+        if memory is not None:
+            memory.save()
         state.save()
     refunds = 0
     for item in to_run:
         touch_watcher(cfg)
         if isinstance(item, Notice):
             reply = item.text
+            _reply(api, token, chat_id, reply, item.buttons)
+            continue
+        elif isinstance(item, taskadd.TaskAddRequest):
+            # The one Google WRITE: made here, with the state lock released. Recorded only on success.
+            res = taskadd.run(item, cfg, now)
+            taskadd.finish(item, res, state_path=path, now=now, api=api, token=token, chat_id=chat_id)
+            continue
         elif isinstance(item, chat.ChatRequest):
             reply, refund = chat.answer_full(item, cfg, now, api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
             refunds += 1 if refund else 0

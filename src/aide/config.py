@@ -95,9 +95,15 @@ class Config:
     # Turning it on is the owner's consent to send the typed sentence (nothing else) to the LLM.
     chat_enabled: bool = False
     chat_max_per_day: int = 20   # own daily budget, separate from llm_max_calls_per_day
+    # `/기억`: things the owner typed himself, kept in data/memory.json and given to the model as
+    # background (never from mail/news text). Off by default; needs `commands` (text messages).
+    memory_enabled: bool = False
     # Google Tasks (read-only, tasks.readonly): names from google_accounts whose task lists are read.
     # Empty = off. Only these accounts need the extra permission (`google-login --tasks`).
     tasks_accounts: List[str] = field(default_factory=list)
+    # Adding a task from a mail alert ("📝 할 일로" button, taskadd.py): the first thing aide WRITES. Needs
+    # tasks_accounts and the wider permission (`google-login --tasks-write`). False = off, no button.
+    tasks_write: bool = False
     # "먼저 챙겨 알리기" (ARCHITECTURE.md "먼저 챙기기"): one extra line in the morning / evening message.
     # Allowed: "busy" (morning, 바쁜 날) and "prep" (evening, 내일 준비). [] = off. No LLM, no new calls.
     nudges: List[str] = field(default_factory=list)
@@ -112,6 +118,15 @@ class Config:
     # GitHub activity in the morning greeting (github_brief.py): GitHub user names whose owned repos are
     # watched. [] = off. Tokens come from the environment only (GITHUB_TOKEN_<NAME>, see .env.example).
     github_accounts: List[str] = field(default_factory=list)
+    # health.py: in the morning greeting, a "■ aide 점검 (어제)" section (yesterday's error/warning counts from
+    # the log file, GitHub token expiry within 14 days) and, from the heartbeat, a once-a-day Telegram alert
+    # when a Google login has to be redone. False = off.
+    health_alerts: bool = False
+    # weather_alerts.py: "■ 날씨에 따른 안내" (commute, outdoor events, classroom, things to bring).
+    # Needs weather_enabled. Rule-based, no LLM. False = off.
+    weather_alerts: bool = False
+    outdoor_keywords: List[str] = field(default_factory=lambda: [
+        "체육", "운동회", "체험", "소풍", "야외", "현장", "견학", "수련", "캠프", "등산"])
 
     def resolved_state_path(self) -> Path:
         return _resolve(self.state_path)
@@ -189,10 +204,12 @@ def load_config(path: Optional[Path] = None) -> Config:
     if not isinstance(cfg.rules_enabled, bool) or not isinstance(cfg.mail_bulk_fold, bool):
         raise ConfigError("rules_enabled / mail_bulk_fold 는 true/false 여야 합니다.")
     _check_chat(cfg)
+    _check_memory(cfg)
     _check_tasks(cfg)
     _check_nudges(cfg)
     _check_news(cfg)
     _check_github(cfg)
+    _check_health_weather(cfg)
     if cfg.rules_enabled and cfg.evening_hour is None:
         # The weekly "걸러낸 것" summary in the evening wrap-up is the only place a rule that hides
         # too much shows up, and it cannot be switched off on its own -- so rules need it.
@@ -212,6 +229,13 @@ def _check_chat(cfg: "Config") -> None:
                           "(대화는 /명령과 같은 읽기 전용 조회만 실행합니다).")
 
 
+def _check_memory(cfg: "Config") -> None:
+    if not isinstance(cfg.memory_enabled, bool):
+        raise ConfigError("memory_enabled 는 true/false 여야 합니다.")
+    if cfg.memory_enabled and not cfg.commands:
+        raise ConfigError("memory_enabled 를 켜려면 commands 도 필요합니다 (/기억 은 글자 메시지로 받습니다).")
+
+
 def _check_news(cfg: "Config") -> None:
     h = cfg.news_hours
     if (not isinstance(h, list) or len(set(h)) != len(h)
@@ -225,6 +249,17 @@ def _check_news(cfg: "Config") -> None:
     a = cfg.market_max_age_hours
     if not isinstance(a, int) or isinstance(a, bool) or not 1 <= a <= 24:
         raise ConfigError("market_max_age_hours 는 1~24 사이의 정수여야 합니다.")
+
+
+def _check_health_weather(cfg: "Config") -> None:
+    if not isinstance(cfg.health_alerts, bool) or not isinstance(cfg.weather_alerts, bool):
+        raise ConfigError("health_alerts / weather_alerts 는 true/false 여야 합니다.")
+    k = cfg.outdoor_keywords
+    if (not isinstance(k, list) or len(k) > 30
+            or any(not isinstance(x, str) or not x.strip() or len(x) > 20 or "\n" in x for x in k)):
+        raise ConfigError("outdoor_keywords 는 20자 이하 낱말의 목록(최대 30개)이어야 합니다.")
+    if cfg.weather_alerts and not cfg.weather_enabled:
+        raise ConfigError("weather_alerts 를 켜려면 weather_enabled 도 필요합니다 (날씨 예보를 쓰는 기능입니다).")
 
 
 GITHUB_ACCOUNT = re.compile(r"^[A-Za-z0-9-]{1,39}$")
@@ -251,6 +286,10 @@ def _check_tasks(cfg: "Config") -> None:
             raise ConfigError(f"tasks_accounts 에 google_accounts 에 없는 이름이 있습니다: {unknown}")
     elif len(t) > 1:
         raise ConfigError("계정이 하나뿐일 때 tasks_accounts 는 항목 하나만 쓸 수 있습니다.")
+    if not isinstance(cfg.tasks_write, bool):
+        raise ConfigError("tasks_write 는 true/false 여야 합니다.")
+    if cfg.tasks_write and not t:
+        raise ConfigError("tasks_write 를 켜려면 tasks_accounts 도 필요합니다 (할 일을 추가할 계정).")
 
 
 NUDGE_NAMES = ("busy", "prep")

@@ -6,10 +6,10 @@ import secrets
 from datetime import datetime, time
 from typing import Callable, List, Optional, Sequence
 
-from . import accounts, gmail, google_auth, inbox, llm, netutil, rules, telegram
+from . import accounts, gmail, google_auth, health, inbox, llm, netutil, rules, telegram
 from .checks import git_dirty, market_news, news_keywords, notice_pages
 from .config import Config
-from .models import Finding
+from .models import Finding, clean
 from .state import State, StateLocked, locked
 
 log = logging.getLogger("aide.heartbeat")
@@ -183,6 +183,20 @@ def targets_for(batch: Sequence[Finding], folded: Sequence[Finding]) -> List[dic
     return out
 
 
+def mails_for(batch: Sequence[Finding]) -> List[dict]:
+    """Mail the owner may turn into a task from this digest (mail -> task buttons): the shown mail items,
+    max MAX_TARGETS. The title is the already-cleaned one; the link is kept only if it is a Gmail address."""
+    out: List[dict] = []
+    for f in batch:
+        if f.source != "mail":
+            continue
+        out.append({"k": f.key, "t": clean(f.title, 100),
+                    "u": f.url if f.url.startswith(telegram.URL_PREFIX) else "", "a": f.account})
+        if len(out) >= MAX_TARGETS:
+            break
+    return out
+
+
 def load_rules(cfg: Config) -> Optional["rules.Rules"]:
     return rules.Rules(rules.path_for(cfg.resolved_state_path())) if cfg.rules_enabled else None
 
@@ -202,6 +216,7 @@ def run(
     now: Optional[datetime] = None,
     sender: Callable[..., None] = telegram.send,
     fetch=news_keywords.fetch_feed,
+    access_token=google_auth.access_token,
 ) -> int:
     """One heartbeat. Exit codes: 0 ok (including 'nothing to report'), 1 send failed, 2 setup problem.
 
@@ -232,6 +247,9 @@ def run(
         print(format_digest(sorted(shown, key=lambda f: -f.priority), now, cfg.max_items_per_digest, folded))
         log.info("드라이런: 전송하지 않았고 상태도 바꾸지 않았습니다. (--send 로 실제 전송)")
         return 0
+
+    if cfg.health_alerts:   # a Google login that must be redone is told once a day (network outside the lock)
+        health.check_auth(cfg, now, token=token, chat_id=chat_id, sender=sender, access=access_token)
 
     slot = mail_slot(cfg, now) if cfg.mail_enabled else None
     slot_due = bool(slot) and not State(path).is_seen(slot)
@@ -286,10 +304,11 @@ def run(
             new = sorted(new, key=lambda f: -f.priority)  # stable: pinned, then high ... low last; a no-op when nothing ranked
             batch = new[: cfg.max_items_per_digest]
             targets = targets_for(batch, folded) if rule_set is not None else []
+            mails = mails_for(batch) if cfg.tasks_write else []
             digest_id = secrets.token_hex(4)
             digest = format_digest(new, now, cfg.max_items_per_digest, folded)
             try:
-                sender(digest, token=token, chat_id=chat_id, buttons=inbox.buttons_for(digest_id, with_clean=bool(targets)))
+                sender(digest, token=token, chat_id=chat_id, buttons=inbox.buttons_for(digest_id, with_clean=bool(targets), with_task=bool(mails)))
             except telegram.TelegramError as e:
                 log.error("전송 실패: %s (다음 점검에서 재시도)", e)
                 return 1
@@ -298,7 +317,7 @@ def run(
                 state.mark(k, now)
             if mark_slot and len(new) <= len(batch):
                 state.mark(slot, now)  # leftovers (if any) keep the slot open for the next check
-            state.add_digest(digest_id, all_keys, now, targets)
+            state.add_digest(digest_id, all_keys, now, targets, mails)
             state.prune(now)
             state.save()
             log.info("%d건 전송 완료", len(batch))

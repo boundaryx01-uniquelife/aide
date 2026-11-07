@@ -40,12 +40,17 @@
   "mail_bulk_fold": false,
   "chat_enabled": false,
   "chat_max_per_day": 20,
+  "memory_enabled": false,
   "tasks_accounts": [],
+  "tasks_write": false,
   "nudges": [],
   "busy_events": 5,
   "news_hours": [],
   "market_queries": [],
   "market_exclude": ["리딩방", "무료 추천", "카톡방", "수익 보장"],
   "market_max_age_hours": 3,
-  "github_accounts": []
+  "github_accounts": [],
+  "health_alerts": false,
+  "weather_alerts": false,
+  "outdoor_keywords": ["체육", "운동회", "체험", "소풍", "야외", "현장", "견학", "수련", "캠프", "등산"]
 }

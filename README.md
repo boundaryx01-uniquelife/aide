@@ -97,6 +97,18 @@ python -m unittest discover -s tests -v
 - 할 일 제목은 텔레그램 본인 채팅으로만 가고, AI(Anthropic)에는 보내지 않습니다.
 - 자세한 설계·보안 검토는 `ARCHITECTURE.md` 의 "구글 할 일", `SECURITY.md` 의 "구글 할 일".
 
+## 메일 → 할 일 버튼 (구글 할 일 추가, 기본 꺼짐)
+메일 알림 아래 `[📝 할 일로]` → 메일을 고르고 → `[오늘] [내일] [날짜 없음]` 을 누르면 그 메일 제목이 구글 할 일에 **추가**됩니다(메모에 Gmail 링크). 추가만 하고 수정·삭제·완료 처리는 못 합니다. 하루 20건까지, 같은 메일은 한 번만. AI(LLM)는 쓰지 않습니다.
+
+1. 서버 `config.json` 에 `"tasks_accounts": ["개인"]`(이미 할 일을 읽고 있다면 그대로)과 `"tasks_write": true` 를 넣습니다.
+2. **재로그인(PC)**: `python -m aide google-login --account 개인 --tasks-write` → 동의 화면에서 할 일 항목까지 체크하고 허용합니다. 끝에 "할 일은 읽기와 추가 권한이 저장되었습니다" 가 나와야 합니다.
+3. `data/google_token_personal.json` 을 서버로 복사하고 `chown aide:aide`, `chmod 600` 을 합니다.
+4. `aide-watch` 재시작 후 `python -m aide selfcheck` 의 `tasks_write` 줄이 "권한 있음" 인지, 텔레그램 `/연결` 에 "할 일 쓰기" 가 보이는지 확인합니다.
+- 권한이 없으면 눌러도 `할 일 쓰기 권한이 없어요 — PC에서 python -m aide google-login --account <계정> --tasks-write 후 토큰을 서버로 복사` 라고만 알려 줍니다.
+- 메일 계정이 `tasks_accounts` 에 있으면 그 계정에, 아니면 `tasks_accounts` 첫 계정에 추가됩니다. `[확인]`·`[무시]` 를 눌러도 `[📝 할 일로]` 는 남습니다.
+- 켜기 전에 만들어진 알림에는 버튼이 없고, 끄면 남은 버튼은 "만료된 버튼이에요" 가 됩니다.
+- 설계·보안 검토는 `ARCHITECTURE.md` 의 "메일 → 할 일", `SECURITY.md` 의 "메일 → 할 일".
+
 ## 먼저 챙기기 (nudges)
 `config.json` 에 `"nudges": ["busy", "prep"]` (기본 꺼짐)로 아침·저녁 메시지 머리줄 아래에 한 줄씩 붙입니다. LLM·새 알림 없음.
 - `busy`(아침): `⚠ 바쁜 날: 일정 6개 · 겹치는 일정 2개 · 오늘까지 할 일 3개` — 일정이 `busy_events`(기본 5)개 이상이거나 겹침이 있을 때만.
@@ -119,6 +131,22 @@ python -m unittest discover -s tests -v
 3. `.env` 에 `GITHUB_TOKEN_` + 계정 이름을 **대문자로, `-` 는 `_` 로** 바꾼 이름으로 넣습니다. 예: `GITHUB_TOKEN_BOUNDARYX01_UNIQUELIFE=...`, `GITHUB_TOKEN_FORUNIQUELIFE00=...` (`.env.example` 참고). 서버에서 쓰려면 서버의 `.env` 에 넣고 `aide-watch` 를 재시작합니다.
 4. `python -m aide selfcheck` 의 `github` 줄이 계정마다 "토큰 있음" 이어야 합니다(값은 출력하지 않음).
 - 저장소 58개 기준 호출은 계정 목록 1회 + 저장소마다 Actions 1회 + 어제 푸시된 저장소마다 3회 정도입니다. 미리보기(`python -m aide morning`)도 실제로 GitHub 를 부릅니다.
+
+## 고장 알림 (`health_alerts`, 기본 꺼짐)
+`"health_alerts": true` 로 켭니다. 새 외부 호출은 GitHub 토큰 만료 확인(`GET api.github.com/user`) 하나뿐입니다.
+- 아침 인사 맨 끝에 문제가 있을 때만 `■ aide 점검 (어제)` 구역: `data/aide.log` 의 **어제** 줄 중 ERROR·WARNING 개수를 이름표별로 셉니다(`오류 1 · 경고 12 (메일 4 · 뉴스 피드 6 · 일정 2)`). 오류 1건 이상, "만료"/"권한" 이 든 경고, 또는 경고 10건 이상일 때만 나옵니다. **로그 본문은 메시지에 넣지 않습니다.** 파일은 끝 2MB 만 읽고, 없으면 구역을 생략합니다.
+- GitHub 토큰(`github_accounts`) 만료가 14일 이내면 `GitHub 토큰(계정) 만료 D-N` 한 줄(만료일이 없는 토큰은 아무것도 안 함).
+- 점검(heartbeat, 조용한 시간 제외, `--send`)이 각 구글 계정의 로그인을 확인해 갱신이 안 되면 `⚠ 구글 로그인 확인 필요: <계정> — PC에서 python -m aide google-login --account <계정> 후 토큰을 서버로 복사` 를 계정당 하루 한 번 보냅니다. 네트워크 문제는 알리지 않습니다.
+
+## 연결 상태 (`/연결`)
+`/도움` 처럼 `commands` 에 없어도 항상 쓸 수 있는 읽기 전용 명령입니다(별칭 `connections`). 구글 계정별 권한(토큰 파일의 scope 로만 판단), AI 키와 쓰는 곳, GitHub 토큰과 만료일, 뉴스·장중 특징주, 날씨 설정을 한 화면으로 보여 줍니다. 비밀값·이메일 주소·파일 경로는 나오지 않습니다.
+
+## 날씨에 따른 안내 (`weather_alerts`, 기본 꺼짐)
+`"weather_alerts": true`(`weather_enabled` 필요). 아침은 오늘, 저녁은 내일(일요일은 월요일) 기준으로 `■ 날씨에 따른 안내` 를 최대 5줄 붙입니다. LLM 을 쓰지 않고 고정 문구만 씁니다. 해당 사항이 없으면 구역이 없습니다.
+- `출근:` 비(강수확률 60%↑ 또는 비 날씨 코드)·눈·강풍(최대 14m/s↑)·영하 결빙을 합쳐 한 줄, 첫 시간 일정이 있으면 일찍 출발 안내.
+- 야외 일정(제목에 `outdoor_keywords`, 기본 체육·운동회·체험·소풍·야외·현장·견학·수련·캠프·등산)마다(최대 2줄) 위험 요인(비·미세먼지 나쁨↑·최고 33℃↑·강풍·최저 -5℃↓)과 할 일 방향.
+- `교실:` 미세먼지·폭염·한파, `준비:` 전날보다 최저 7℃↓·일교차 12℃↑. 위 줄에 이미 나온 요인은 반복하지 않습니다.
+- 미세먼지는 Open-Meteo 대기질(`air-quality-api.open-meteo.com`, 키 불필요)의 그날 최댓값으로 환경부 기준(PM10 나쁨 81↑·매우나쁨 151↑, PM2.5 나쁨 36↑·매우나쁨 76↑)을 씁니다. 응답이 이상하면 그 데이터 없이 진행합니다.
 
 ## LLM 중요도 판단 (2a)
 `config.json` 에 `"llm_enabled": true` 를 넣고 `.env` 에 `ANTHROPIC_API_KEY` 를 넣으면, 30분 점검 때마다 새 메일·공지·뉴스 항목의 중요도(높음/보통/낮음)를 LLM 이 매겨 **순서만** 바꿔 줍니다(기본 꺼짐).
@@ -213,3 +241,13 @@ python -m unittest discover -s tests -v
 
 ## 여러 구글 계정
 메일·일정을 여러 구글 계정에서 함께 받으려면 `docs/GOOGLE_SETUP.md` 의 "계정이 여러 개일 때" 를 따르세요.
+
+## 기억 (`/기억`)
+`config.json` 에 `"memory_enabled": true` (기본 꺼짐, `commands` 도 필요)를 넣으면 **본인의 개인 채팅**에서 직접 쓴 글만 기억해 둘 수 있습니다.
+
+- `/기억 교육청 공문은 항상 중요` → `기억했어요: …` + [↩ 취소] 버튼
+- `/기억` → `■ 기억 (N/50)` 목록 + 항목마다 [🗑 N] 삭제 버튼 (영문 `/remember`)
+- 문장으로 묻기(`chat_enabled`)와 LLM 중요도 판단·오늘의 핵심에 **참고용 배경**으로 붙습니다. 모델 출력은 이전처럼 닫힌 값뿐입니다.
+- 메일·뉴스·일정 같은 외부 글은 자동으로 저장하지 않습니다. 적은 내용은 **AI(Anthropic)로 전송**되니 비밀번호·개인정보는 쓰지 마세요.
+- 한도: 50개, 한 항목 200자, 메시지 230자. `/명령` 과 같은 횟수 제한을 씁니다. 저장 파일은 `data/memory.json`(깃 제외). `selfcheck` 에서 개수만 확인할 수 있습니다.
+- 자세한 설계·보안은 `ARCHITECTURE.md` 의 "기억", `SECURITY.md` 의 "기억".

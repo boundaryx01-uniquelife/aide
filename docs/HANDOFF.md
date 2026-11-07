@@ -13,7 +13,7 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 |---|---|---|---|
 | 1 | 구글 로그인 7일 만료 소멸 확인 (로그에 "만료되었습니다" 없음) | 확인 | **완료 2026-11-06** — 서버 로그의 마지막 "만료" 기록이 10/13 22:07 이고 이후 없음(사용자 확인) |
 | 2 | L1 [🧹 정리] 버튼 실사용 확인 (메일 알림에서) | 확인 | 메일 알림이 올 때 |
-| 3 | 로그인 만료 예고 알림(텔레그램) | 소형 기능 | 사용자 결정 대기 |
+| 3 | 로그인 만료 예고 알림(텔레그램) | 소형 기능 | 이 PR(고장 알림)로 완료: 구글 로그인 실패를 계정당 하루 한 번 알림 |
 | 4 | 2b 서버에서 켜기(`llm_highlights`) | 설정 | 사용자 결정 + Anthropic 정책 확인 미완 |
 | 5 | L2: 같은 발신자 광고·정기 메일이 반복되면 규칙 제안 | 기능 | 예정 (설계부터) |
 | 6 | L3: 취향을 LLM 판단에 반영 (뉴스 입맛) | 기능 | 예정 (설계·보안 검토부터) |
@@ -25,6 +25,10 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 | 12 | 먼저 챙기기 1단계: 바쁜 날(아침)·내일 준비(저녁) | 기능 | **완료 2026-11-07** (PR #17 병합·서버 반영, `nudges: [busy, prep]` 켬) |
 | 13 | 먼저 챙기기 2단계: 다음 일정 30~60분 전 알림 | 기능 | 보류(1단계 써 본 뒤 결정) |
 | 14 | GitHub 아침 브리핑(계정 전체, 실패 알림) | 기능 | **완료 2026-11-07** (PR #18 병합·서버 반영, 두 계정 토큰 등록·미리보기 확인) |
+| 15 | /기억(직접 쓴 것만 기억, 대화·중요도 판단에 반영) | 기능 | **완료 2026-11-07** (PR #19 병합·서버 반영, `memory_enabled` 켬) |
+| 16 | 고장 알림·/연결 | 기능 | **완료 2026-11-07** (PR #20 병합·서버 반영, `health_alerts` 켬) |
+| 17 | 날씨 기반 종합 안내(출근·일정 방향·교실 운영·준비물) | 기능 | **완료 2026-11-07** (PR #20 병합·서버 반영, `weather_alerts` 켬) |
+| 18 | 메일 → 할 일 버튼(쓰기 권한, 2단계 승인) | 기능 | PR #21 병합 2026-11-07 · 서버 `tasks_write` 는 재로그인(기본·개인 `--tasks-write`) 후 켬 |
 
 - 하지 않기로 함: 4번(메일 답장 초안). 개인 일정 알림 외 "기억해서 챙기기"(한 줄 캡처 등)는 L 단계가 끝난 뒤 다시 논의.
 - 별도 정리 항목은 아래 "남은 정리" 참고(PC 예약 작업 삭제 여부 확인 등).
@@ -59,7 +63,7 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 
 ## 남은 정리
 - **Vultr 서버 점검·정리(2026-11-07)**: 저널 로그 2.2GB→189MB, 상한 300MB(`/etc/systemd/journald.conf.d/size-limit.conf`), 디스크 77%→67%. 외부 노출 포트 정리: 9000(scholarcheck 논문나침반 docker, 재시작 안 함으로 멈춤), 8088(investment-relay, 6/6 이후 미사용, 외부 스캐너가 붙잡아 멈춰 있었음 → 서비스 disable·ufw 규칙 삭제). 사용 안 하는 폴더 `investment-briefing`, `public` 은 `/root/_archive/20261107/` 에 백업 후 삭제. `/root/briefing-bot`(dashboard 서비스가 실행 중), `/root/realestate-bot`(briefing-bot 코드가 참조), stock-signal 관련 서비스·타이머는 **지우지 않음**(얽혀 있음). briefing-bot GitHub 저장소(boundaryx01-uniquelife)는 Actions 를 끄고 아카이브(14회 연속 실패, 토큰 미등록).
-- **결정 대기(사용자)**: ① `/root/ai_os/gcp-key.json`, `/opt/ai-os-daemon/gcp-key.json`(ai-agent 서비스 계정 키) 이 누구나 읽기 가능 → 600 으로 바꿀지(ai-agent 는 소유자 `aios` 라 영향 없음) ② `/root/briefing-bot` 의 서버에만 있는 자동 백업 커밋 9개(5/19~5/27)를 git bundle 로 보관할지.
+- **처리 완료(2026-11-07)**: ai-agent 서비스 계정 키 2개(`/root/ai_os/gcp-key.json`, `/opt/ai-os-daemon/gcp-key.json`)를 600 으로(소유자 aios·root 만 읽기, `claude` 계정 읽기 불가 확인, ai-agent 정상). `/root/briefing-bot` 의 서버에만 있던 자동 백업 커밋 9개는 `/root/_archive/20261107/briefing-bot-local.bundle` 로 보관(무결성 확인).
 - PC 예약 작업 aide-poll-watch, aide-heartbeat 삭제(서버 이전 완료, 현재 Disabled). 삭제 여부를 사용자에게 확인.
 - 선택 개선: 저녁 마감 창 7일로 확대, 제목 마감일 `(~10/12(월))` 파싱, 예약 시각 :00/:30 이동, 공공데이터(data.go.kr) 연동(ROADMAP F).
 
@@ -143,6 +147,24 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - 바뀐 파일: `github_brief.py`(신규), `morning.py`(`fetch_github=`), `config.py`, `__main__.py`(selfcheck), `config.example.json`, `.env.example`, `tests/test_github_brief.py`(신규), 문서.
 - 테스트 757개 통과(기존 716 + 신규 41).
 - 남은 일: PR 병합 → 사용자가 계정별 fine-grained 토큰(All repositories, Metadata·Contents·Pull requests·Actions Read-only) 발급 → 서버 `.env` 에 `GITHUB_TOKEN_BOUNDARYX01_UNIQUELIFE`, `GITHUB_TOKEN_FORUNIQUELIFE00` → `config.json` 에 `github_accounts` → `aide-watch` 재시작 → selfcheck `github` 줄 확인 → `morning` 미리보기로 확인.
+
+## /기억 구현 완료 — 브랜치 feat/memory, PR 전 · 서버 반영 전
+- 내용: `memory_enabled`(기본 꺼짐, `commands` 필요). 본인이 직접 쓴 `/기억 <글>` 만 `data/memory.json` 에 저장(50개·200자·중복 없음), `/기억` 목록과 [🗑 N]/[↩ 취소] 버튼. 문장 질문·LLM 중요도·핵심 요청의 시스템 글에 참고용으로 붙음(3000자 상한, 꺼짐·빈 목록이면 요청 본문 동일). 외부 글자는 자동 저장하지 않음. 설계: ARCHITECTURE.md "기억", 보안: SECURITY.md "기억".
+- 바뀐 파일: `memory.py`(신규), `inbox.py`(`Notice.buttons`, `/기억`·`k:` 버튼), `chat.py`·`llm.py`(프롬프트 블록), `config.py`, `commands.py`(도움말), `__main__.py`(selfcheck), `.gitignore`, `config.example.json`, `tests/test_memory.py`(신규), 문서.
+- 테스트 811개 통과(기존 757 + 신규 54), 기존 기대값 변경 없음.
+- 남은 일: PR 병합 → 서버 반영 → `config.json` 에 `"memory_enabled": true` → `aide-watch` 재시작 → selfcheck `memory` 줄 확인 → 텔레그램 `/기억 …` 로 확인.
+
+## 고장 알림·/연결·날씨 안내 구현 완료 — 브랜치 feat/health-connections-weather, PR 전 · 서버 반영 전
+- 내용: `health_alerts`(어제 기록 점검·GitHub 토큰 만료 14일 예고·구글 로그인 실패 하루 한 번 알림), `/연결`(항상 가능), `weather_alerts`+`outdoor_keywords`(아침 오늘·저녁 내일 `■ 날씨에 따른 안내` 최대 5줄). 모두 기본 꺼짐, LLM 없음. 설계: ARCHITECTURE.md 끝, 보안: SECURITY.md 끝.
+- 바뀐 파일: `health.py`·`weather_alerts.py`(신규), `netutil.py`(`get_json_with_headers`), `weather.py`(`detail`), `commands.py`, `heartbeat.py`, `morning.py`, `evening.py`, `config.py`, `__main__.py`, `config.example.json`, 테스트 3개 신규(`test_health.py`, `test_connections.py`, `test_weather_alerts.py`), 문서.
+- 테스트 966개 통과(기존 811 + 신규 155), 기존 기대값 변경 없음.
+- 남은 일: PR 병합 → 서버 반영 → `config.json` 에 `"health_alerts": true`, `"weather_alerts": true`(`weather_enabled` 필요) → `aide-watch` 재시작 → selfcheck `health`·`weather_alerts` 줄 확인 → `/연결`, 아침·저녁 미리보기 확인.
+
+## 메일 → 할 일 구현 완료 — 브랜치 feat/mail-to-task, PR 전 · 서버 반영 전 · 기본 꺼짐
+- 내용: 메일 알림의 `[📝 할 일로]` → 메일 선택 → `[오늘][내일][날짜 없음]` 두 번 승인으로 구글 할 일에 **추가**(aide 의 첫 쓰기, 수정·삭제 없음, 하루 20건, 같은 항목 한 번). LLM 안 씀. 설계: ARCHITECTURE.md "메일 → 할 일", 보안: SECURITY.md "메일 → 할 일".
+- 새 파일: `src/aide/taskadd.py`, `tests/test_mail_to_task.py`. 바뀐 파일: `google_auth.py`(`TASKS_WRITE_SCOPE`·`TASKS_READ_SCOPES`·`login(tasks_write=)`·`access_token` 대안 튜플), `gtasks.py`(읽기 권한 둘 중 하나), `inbox.py`(`t:` 분기·`tasks_write`·키보드 규칙·잠금 밖 실행), `heartbeat.py`(`mails_for`·버튼), `state.py`(`mails`·`task_adds`), `config.py`, `commands.py`(`/연결` 할 일 쓰기), `__main__.py`(`--tasks-write`·selfcheck), `config.example.json`, 문서. 기존 테스트 `tests/test_gtasks.py` 한 줄(`need_scope` 기대값이 단일 권한에서 `TASKS_READ_SCOPES` 튜플로)만 요구 변경에 맞춰 고침.
+- 테스트 1030개 통과(기존 966 + 신규 64).
+- **남은 일(사용자)**: PR 병합 → 서버 반영 → **PC 재로그인** `python -m aide google-login --account 개인 --tasks-write`(동의 화면에서 할 일 체크) → 토큰 서버 복사(chown/chmod 600) → 서버 `config.json` 에 `"tasks_write": true`(`tasks_accounts` 필요) → `aide-watch` 재시작 → selfcheck `tasks_write` 줄 "권한 있음" 확인 → 메일 알림이 올 때 `[📝 할 일로]` 로 실제 한 건 추가해 확인 → 켠 날짜를 SECURITY.md 에 기록.
 
 ## 최근 건드린 파일
 - 3b 명령: 위 섹션 참고.
