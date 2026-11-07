@@ -46,5 +46,6 @@
   "news_hours": [],
   "market_queries": [],
   "market_exclude": ["리딩방", "무료 추천", "카톡방", "수익 보장"],
-  "market_max_age_hours": 3
+  "market_max_age_hours": 3,
+  "github_accounts": []
 }

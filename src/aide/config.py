@@ -109,6 +109,9 @@ class Config:
     market_queries: List[str] = field(default_factory=list)
     market_exclude: List[str] = field(default_factory=lambda: ["리딩방", "무료 추천", "카톡방", "수익 보장"])
     market_max_age_hours: int = 3
+    # GitHub activity in the morning greeting (github_brief.py): GitHub user names whose owned repos are
+    # watched. [] = off. Tokens come from the environment only (GITHUB_TOKEN_<NAME>, see .env.example).
+    github_accounts: List[str] = field(default_factory=list)
 
     def resolved_state_path(self) -> Path:
         return _resolve(self.state_path)
@@ -189,6 +192,7 @@ def load_config(path: Optional[Path] = None) -> Config:
     _check_tasks(cfg)
     _check_nudges(cfg)
     _check_news(cfg)
+    _check_github(cfg)
     if cfg.rules_enabled and cfg.evening_hour is None:
         # The weekly "걸러낸 것" summary in the evening wrap-up is the only place a rule that hides
         # too much shows up, and it cannot be switched off on its own -- so rules need it.
@@ -221,6 +225,19 @@ def _check_news(cfg: "Config") -> None:
     a = cfg.market_max_age_hours
     if not isinstance(a, int) or isinstance(a, bool) or not 1 <= a <= 24:
         raise ConfigError("market_max_age_hours 는 1~24 사이의 정수여야 합니다.")
+
+
+GITHUB_ACCOUNT = re.compile(r"^[A-Za-z0-9-]{1,39}$")
+MAX_GITHUB_ACCOUNTS = 5
+
+
+def _check_github(cfg: "Config") -> None:
+    g = cfg.github_accounts
+    if (not isinstance(g, list) or len(g) > MAX_GITHUB_ACCOUNTS
+            or any(not isinstance(n, str) or not GITHUB_ACCOUNT.match(n) for n in g)):
+        raise ConfigError(f"github_accounts 는 GitHub 사용자 이름(영문·숫자·-, 39자 이하)의 목록(최대 {MAX_GITHUB_ACCOUNTS}개)이어야 합니다.")
+    if len({n.lower() for n in g}) != len(g):
+        raise ConfigError("github_accounts 에 같은 이름이 중복되어 있습니다.")
 
 
 def _check_tasks(cfg: "Config") -> None:

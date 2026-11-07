@@ -103,6 +103,23 @@ python -m unittest discover -s tests -v
 - `prep`(저녁): `▶ 내일 준비: 첫 일정 08:30~10:00 출장 @본관 · 내일까지 할 일 2개` — 내일 첫 일정과 할 일이 있을 때만(일요일은 월요일 기준).
 할 일 수는 구글 할 일(`tasks_accounts`)이 켜져 있을 때만 들어갑니다.
 
+## GitHub 아침 브리핑 (읽기 전용)
+`config.json` 의 `"github_accounts": ["boundaryx01-uniquelife", "foruniquelife00"]` (기본 `[]` = 꺼짐, 최대 5개)에 적은 계정이 가진 저장소를 **전부 자동으로** 봅니다(저장소별 설정 없음, 보관된 저장소 제외). 아침 인사의 할 일 구역 다음에 어제(KST 00:00~24:00) 활동이 나옵니다. 아무 일도 없었으면 구역이 빠집니다. AI(LLM)는 쓰지 않습니다.
+```
+■ GitHub (어제 11/06)
+⚠ briefing-bot: 자동 작업 실패 1 (Daily 3D News Bot)
+• aide: 커밋 5 · PR 병합 2 · 열린 PR 1
+```
+- ⚠ 줄은 GitHub Actions 실패(푸시가 없어도 예약 실행은 있으므로 모든 저장소 대상), • 줄은 어제 푸시된 저장소의 커밋·병합 PR·열린 PR **개수**입니다. 커밋 메시지·PR 제목은 가져오지도 표시하지도 않습니다. 최대 10줄 + `…외 N개`. 같은 이름의 저장소가 두 계정에 있으면 `계정/저장소` 로 나옵니다.
+- 토큰이 없으면 `GitHub(계정): 토큰 없음`, 401/403·연결 오류면 `GitHub(계정): 불러오지 못함 (토큰 확인)` 한 줄만 나오고 아침 인사는 그대로 나갑니다.
+
+토큰 만들기(계정마다 따로, 그 계정으로 로그인한 상태에서):
+1. GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate new token.
+2. Resource owner 는 그 계정, Repository access 는 **All repositories**, Permissions 의 **Metadata · Contents · Pull requests · Actions** 를 모두 **Read-only** 로 둡니다(다른 권한은 주지 않습니다). 만료일은 길게(예: 1년) 잡고 달력에 적어 둡니다.
+3. `.env` 에 `GITHUB_TOKEN_` + 계정 이름을 **대문자로, `-` 는 `_` 로** 바꾼 이름으로 넣습니다. 예: `GITHUB_TOKEN_BOUNDARYX01_UNIQUELIFE=...`, `GITHUB_TOKEN_FORUNIQUELIFE00=...` (`.env.example` 참고). 서버에서 쓰려면 서버의 `.env` 에 넣고 `aide-watch` 를 재시작합니다.
+4. `python -m aide selfcheck` 의 `github` 줄이 계정마다 "토큰 있음" 이어야 합니다(값은 출력하지 않음).
+- 저장소 58개 기준 호출은 계정 목록 1회 + 저장소마다 Actions 1회 + 어제 푸시된 저장소마다 3회 정도입니다. 미리보기(`python -m aide morning`)도 실제로 GitHub 를 부릅니다.
+
 ## LLM 중요도 판단 (2a)
 `config.json` 에 `"llm_enabled": true` 를 넣고 `.env` 에 `ANTHROPIC_API_KEY` 를 넣으면, 30분 점검 때마다 새 메일·공지·뉴스 항목의 중요도(높음/보통/낮음)를 LLM 이 매겨 **순서만** 바꿔 줍니다(기본 꺼짐).
 - 높음은 "■ 중요 (AI 판단)" 섹션으로 맨 위에, 낮음은 각 섹션 맨 아래로. 항목을 숨기거나 더하지 않으며, 표시되는 글자는 항상 원래 데이터입니다.
