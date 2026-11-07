@@ -230,3 +230,13 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 - **할 일 한 번만 조회**: `gtasks.gather_safe`(조회 1회, 실패·꺼짐이면 None) → `gtasks.section_from(cfg, now, kind, tasks, failed, total)`(구역 줄) + `gtasks.count_due(tasks, today, days)`(지난 것+기한 내 개수). `gtasks.section()` 은 둘을 묶어 호환용으로 남김. 조회는 상태 잠금 밖. 드라이런(`build_message`)과 전송(`run`)이 같은 `_tasks_and_nudge` 를 쓴다.
 - 2b LLM 입력은 그대로(줄 문구·개수는 모델에 보내지 않음).
 - **한계**: 겹침은 끝 시각이 있는 시간 일정끼리만. 종일 일정은 일정 수에는 들어가지만 겹침 대상이 아님. 계정 불러오기 실패 시 그 계정 몫은 빠진 채 계산된다.
+
+## 기억 `/기억` — 구현 완료 2026-11-07, 서버 배포 전 · 기본 꺼짐
+선생님이 텔레그램에 **직접 쓴 글만** 기억해 두고, 문장으로 묻기·LLM 중요도 판단의 배경 설명으로 쓴다. 메일·뉴스·일정·할 일 같은 외부 글자는 **어떤 경로로도 자동 저장하지 않는다**(저장 경로가 `/기억 <글>` 하나뿐).
+- **`memory.py`**: `Memory`(`data/memory.json`, 상태 파일 옆, `path_for`), `parse_command`(`("list"|"add", 본문)|None`, NFKC·전각 슬래시·`/remember`·`@봇이름`, `/기억해줘` 는 아님), `render_list`/`added_reply`(답장과 버튼), `prompt_block(cfg)`(LLM 요청에 붙일 글). 저장 형식 `{"items": [{"id": 8자리 16진수, "text": 200자 이하, "at": ISO}]}`. 최대 50개, 같은 글 중복 저장 안 함, 쓰기는 tmp+`os.replace`(가능하면 chmod 600), 손상되면 `memory.json.corrupt-시각` 으로 옮기고 빈 목록으로 시작(프롬프트용 읽기는 옮기지 않고 빈 목록으로만 취급).
+- **`inbox.py`**: `memory_enabled` 이고 `commands` 가 비어 있지 않을 때만 `process_updates(memory=...)` 가 `/기억` 을 처리한다. 순서는 `is_command_message`(본인·개인 채팅·글자·비전달·봇 아님) → 재전달 건너뜀 → `parse_command` → 230자 초과 안내 → 10분 초과 건너뜀 → 묶음(`MAX_PER_BATCH`)·시간당(`commands_in_last_hour`) 제한을 `/명령` 과 **공유** → `record_command` → 상태 잠금 안에서 저장소 변경. 꺼져 있으면 `parse_command` 를 아예 부르지 않아 예전처럼 "모르는 명령이에요".
+- **답장**: `Notice(text, buttons=None)` 에 선택적 `buttons` 를 추가했고(기존 Notice 동작 그대로), `poll_once` 가 잠금을 푼 뒤 `api.send(..., buttons=...)` 로 보낸다. 추가 → `기억했어요: <내용>` + `[↩ 취소]`(`k:<id>:undo`), 목록 → `■ 기억 (N/50)` + 번호 줄 + `[🗑 N]`(`k:<id>:del`, 4개씩 한 줄), 중복·가득 참·빈 글자는 안내만.
+- **버튼**: 정규식 `^k:[0-9a-f]{8}:(undo|del)$`. `is_allowed` 로 본인 확인 후 상태 잠금 안에서 id 로 지운다(번호가 아니라 id 라서 목록이 바뀌어도 엉뚱한 것을 지우지 않는다). 없는 id 는 "이미 지웠어요"(멱등), 목록 메시지는 남은 항목으로 다시 그린다. `memory_enabled` 가 꺼져 있으면 "만료된 버튼이에요" 만.
+- **LLM 반영**: `llm._build_request`/`_build_pick_request` 는 `llm_profile` 바로 뒤에, `chat._build_request` 는 시스템 문맥 끝에 `사용자가 직접 적어 둔 기억(참고용, 사용자가 쓴 것): ` + 번호 목록을 붙인다(최대 3000자, 넘으면 최근 것 우선). 꺼짐·빈 목록·손상이면 요청 본문이 이전과 완전히 같다. 모델 출력은 계속 닫힌 값뿐이다.
+- **설정**: `memory_enabled: false`(켜려면 `commands` 필요, `load_config` 검사). `selfcheck` 에 `memory : 켜짐 (N개)`(내용은 출력 안 함). `.gitignore` 에 `data/memory.json(.tmp)`. 도움말(`render_help`)에 사용법과 Anthropic 전송 경고. 로그에는 개수·동작만 남기고 내용은 남기지 않는다.
+- **한계**: 항목 수정은 없다(지우고 다시 쓰기). 50개 목록이 4096자를 넘으면 삭제 후 목록 메시지는 다시 그리지 않고(버튼만 남음) 토스트로만 알린다. 기억이 모델 판단에 얼마나 영향을 주는지는 모델 몫이라 보장하지 않는다.
