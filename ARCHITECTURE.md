@@ -37,6 +37,7 @@
 | `src/aide/inbox.py` | 수신: 3a 버튼 처리 + 3b 명령 허용 검사·속도 제한. 실행은 `commands.py` 에 위임 |
 | `src/aide/commands.py` | 3b 명령 이름 해석과 명령별 조회(`REGISTRY`). `State` 를 받지 않는 읽기 전용 함수들 |
 | `src/aide/chat.py` | C1 문장 → 닫힌 조회 요청 변환·검증과 답장 조립. 모델은 본인 문장만 본다 |
+| `src/aide/github_brief.py` | 아침 인사의 GitHub 구역(어제 커밋·PR·Actions 실패 개수). 읽기 전용, LLM 없음 |
 
 ## 장중 특징주와 뉴스 시각
 - `checks/market_news.py`: `market_queries` 낱말마다 구글 뉴스 검색 RSS(`when:1d`)를 읽고, 제목·요약에 그 낱말이 있고 `market_exclude` 낱말이 없고 `market_max_age_hours` 이내인 기사만 남긴다. `[특징주] 종목, …` 모양의 제목은 종목 이름으로, 그 밖은 정규화한 제목으로 묶어 한 줄(`Finding(source="market")`)로 만든다. 키는 `market:<날짜>:<묶음>` 이라 한 종목은 하루 한 번만 알린다.
@@ -202,6 +203,14 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 - **권한**: `google_auth.TASKS_SCOPE`. `login(tasks=True)` 만 이 권한을 더해 요청하고, 허용 여부를 확인해 알려 준다. `token_has_scope()` 로 `selfcheck` 가 "권한 있음/없음"을 보여 준다(토큰 내용은 출력 안 함). 설정 `tasks_accounts`(google_accounts 이름 목록, 기본 `[]` = 꺼짐).
 - 아침·저녁은 `fetch_tasks=` 를 받아 시험에서 가짜로 바꿀 수 있고, 조회는 잠금 밖에서 한다.
 - **한계**: 완료 처리·추가는 못 한다(읽기 전용). 하위 작업은 각자의 마감일로 나온다(부모와 묶어 보여 주지 않음). 반복 할 일은 구글이 만든 다음 항목만 보인다.
+
+## GitHub 아침 브리핑 — 구현 완료 2026-11-07, 서버 배포 전 · 기본 꺼짐
+- 설정: `github_accounts`(GitHub 사용자 이름 목록, 최대 5, 대소문자 무시 중복 금지, 기본 `[]`). 토큰은 `.env` 의 `GITHUB_TOKEN_<이름 대문자, -→_>`(`github_brief.token_env_name`).
+- **`github_brief.py`**: `fetch(cfg, now, get=netutil.get_json, environ=None)` → 구역 줄 `[]` 또는 `■ GitHub (어제 MM/DD)` … 빈 줄. 어떤 예외도 삼킨다. 호스트는 `https://api.github.com` 하나, 헤더는 `Authorization: Bearer`·`Accept`·`X-GitHub-Api-Version`.
+- 계정마다 `/user/repos?affiliation=owner`(최대 3쪽×100, 보관 저장소·이상한 이름 제외) → 저장소마다 Actions 실패(`created=UTC 범위`, 전 저장소), `pushed_at` 이 어제 시작 이후인 저장소만 커밋 수·병합 PR 수(`merged_at` 범위 필터)·열린 PR 수. "어제"는 KST 전날 00:00~24:00 을 UTC 로 바꿔 보낸다. 한 호출 실패는 그 부분만 건너뛴다. 전체 시간 상한 120초(넘으면 남은 저장소 생략).
+- **표시**: 계정 오류 줄 → ⚠ 실패 줄 → • 활동 줄(커밋 많은 순), 최대 10줄 + `…외 N개`. 커밋 메시지·PR 제목은 요청 결과에서 읽지 않는다.
+- **`morning.py`**: `fetch_github=` 주입. 조회는 상태 잠금 밖에서 한 번, 드라이런·전송이 같은 구역, 할 일 구역 다음. 예외는 `_github_lines` 가 구역만 빼고 삼킨다.
+- **한계**: 기본 브랜치 밖 커밋, 100개 넘는 커밋(`100+`), 어제 병합이 30번째 최근 수정 PR 밖인 경우, Actions 권한이 없는 토큰(실패가 조용히 안 보임)은 정확하지 않다. 조직 소유·협업 저장소는 `affiliation=owner` 라 빠진다.
 
 ## 일정 상세 (B1) — 구현 완료 2026-11-07, 서버 배포 전
 - **`gcal.Event`** 끝에 필드 추가(기본값 있음): `end`("HH:MM", 시간 일정만), `end_day`(마지막 날), `location`(`clean` 40자), `began`(`day` 를 조회 첫날로 옮겼을 때 원래 시작일). 조회 `fields` 에 `end,location` 추가.

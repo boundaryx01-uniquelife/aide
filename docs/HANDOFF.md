@@ -24,6 +24,7 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 | 11 | 대화 후속 B2~B6: 일정 50건 상한·잘림 안내, 메일 검색 확장(별도 보안 검토), 이전 대화 기억(보안 검토), 주간 날씨·지역, 처리 중 표시 | 기능 | 예정 |
 | 12 | 먼저 챙기기 1단계: 바쁜 날(아침)·내일 준비(저녁) | 기능 | 구현 완료, PR 전 |
 | 13 | 먼저 챙기기 2단계: 다음 일정 30~60분 전 알림 | 기능 | 보류(1단계 써 본 뒤 결정) |
+| 14 | GitHub 아침 브리핑(계정 전체, 실패 알림) | 기능 | 구현 완료, PR 전 · 토큰 등록 필요(사용자) |
 
 - 하지 않기로 함: 4번(메일 답장 초안). 개인 일정 알림 외 "기억해서 챙기기"(한 줄 캡처 등)는 L 단계가 끝난 뒤 다시 논의.
 - 별도 정리 항목은 아래 "남은 정리" 참고(PC 예약 작업 삭제 여부 확인 등).
@@ -134,6 +135,12 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - 바뀐 파일: `nudges.py`(신규), `gtasks.py`(`gather_safe`/`section_from`/`count_due`, `section` 유지), `morning.py`/`evening.py`(할 일 한 번 조회 + 줄), `config.py`, `__main__.py`(selfcheck), `config.example.json`, `tests/test_nudges.py`(신규), 문서.
 - 테스트 716개 통과(기존 690 + 신규 26), 기존 기대값 변경 없음.
 - 남은 일: PR 병합 → 서버 반영 → `config.json` 에 `"nudges": ["busy","prep"]` → `aide-watch` 재시작 → selfcheck `nudges` 줄 확인 → 아침·저녁 미리보기로 확인.
+
+## GitHub 아침 브리핑 구현 완료 — 브랜치 feat/github-brief, PR 전 · 서버 반영 전
+- 내용: `github_accounts`(기본 `[]`)의 계정 전체를 자동으로 보고 아침 인사에 어제 활동·Actions 실패 구역 추가. LLM 안 씀. 설계: ARCHITECTURE.md "GitHub 아침 브리핑", 보안: SECURITY.md.
+- 바뀐 파일: `github_brief.py`(신규), `morning.py`(`fetch_github=`), `config.py`, `__main__.py`(selfcheck), `config.example.json`, `.env.example`, `tests/test_github_brief.py`(신규), 문서.
+- 테스트 757개 통과(기존 716 + 신규 41).
+- 남은 일: PR 병합 → 사용자가 계정별 fine-grained 토큰(All repositories, Metadata·Contents·Pull requests·Actions Read-only) 발급 → 서버 `.env` 에 `GITHUB_TOKEN_BOUNDARYX01_UNIQUELIFE`, `GITHUB_TOKEN_FORUNIQUELIFE00` → `config.json` 에 `github_accounts` → `aide-watch` 재시작 → selfcheck `github` 줄 확인 → `morning` 미리보기로 확인.
 
 ## 최근 건드린 파일
 - 3b 명령: 위 섹션 참고.
