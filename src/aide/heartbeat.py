@@ -6,7 +6,7 @@ import secrets
 from datetime import datetime, time
 from typing import Callable, List, Optional, Sequence
 
-from . import accounts, gmail, google_auth, inbox, llm, netutil, rules, telegram
+from . import accounts, gmail, google_auth, health, inbox, llm, netutil, rules, telegram
 from .checks import git_dirty, market_news, news_keywords, notice_pages
 from .config import Config
 from .models import Finding
@@ -202,6 +202,7 @@ def run(
     now: Optional[datetime] = None,
     sender: Callable[..., None] = telegram.send,
     fetch=news_keywords.fetch_feed,
+    access_token=google_auth.access_token,
 ) -> int:
     """One heartbeat. Exit codes: 0 ok (including 'nothing to report'), 1 send failed, 2 setup problem.
 
@@ -232,6 +233,9 @@ def run(
         print(format_digest(sorted(shown, key=lambda f: -f.priority), now, cfg.max_items_per_digest, folded))
         log.info("드라이런: 전송하지 않았고 상태도 바꾸지 않았습니다. (--send 로 실제 전송)")
         return 0
+
+    if cfg.health_alerts:   # a Google login that must be redone is told once a day (network outside the lock)
+        health.check_auth(cfg, now, token=token, chat_id=chat_id, sender=sender, access=access_token)
 
     slot = mail_slot(cfg, now) if cfg.mail_enabled else None
     slot_due = bool(slot) and not State(path).is_seen(slot)

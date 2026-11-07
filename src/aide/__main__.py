@@ -90,6 +90,8 @@ def main(argv=None) -> int:
         print("github           : " + (", ".join(
             f"{n} (토큰 {'있음' if os.environ.get(github_brief.token_env_name(n)) else '없음'})"
             for n in cfg.github_accounts) if cfg.github_accounts else "꺼짐"))
+        print(f"health           : {'켜짐 (어제 기록 점검, 구글 로그인 알림, GitHub 토큰 만료 예고)' if cfg.health_alerts else '꺼짐'}")
+        print(f"weather_alerts   : {'켜짐 (야외 키워드 ' + str(len(cfg.outdoor_keywords)) + '개)' if cfg.weather_alerts else '꺼짐'}")
         print(f"llm_highlights   : {', '.join(cfg.llm_highlights) if cfg.llm_highlights else '꺼짐'}")
         print(f"rules            : {'켜짐' if cfg.rules_enabled else '꺼짐'}"
               f" / 광고·정기 메일 접기 {'켜짐' if cfg.mail_bulk_fold else '꺼짐'}")

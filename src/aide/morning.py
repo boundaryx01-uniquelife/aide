@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from . import accounts, gcal, github_brief, gtasks, llm, netutil, nudges, telegram, weather
+from . import accounts, gcal, github_brief, gtasks, health, llm, netutil, nudges, telegram, weather
 from .checks import git_dirty, yesterday
 from .config import Config
 from .heartbeat import in_quiet_hours
@@ -114,8 +114,19 @@ def _github_lines(cfg: Config, now: datetime, fetch_github) -> List[str]:
         return []
 
 
+def _health_lines(cfg: Config, now: datetime, fetch_health) -> List[str]:
+    """"■ aide 점검" section, fetched outside the state lock. Never raises (a failure drops only this section)."""
+    if not cfg.health_alerts:
+        return []
+    try:
+        return list(fetch_health(cfg, now))
+    except Exception:  # noqa: BLE001
+        log.exception("점검 구역 조회 중 오류")
+        return []
+
+
 def _assemble(cfg: Config, now: datetime, weather_result, events, failed, total, highlight_lines=(),
-              tasks_lines=(), nudge_line="", github_lines=()) -> str:
+              tasks_lines=(), nudge_line="", github_lines=(), health_lines=()) -> str:
     day = (now - timedelta(days=1)).date()
     lines = [f"좋은 아침이에요 · {now:%m/%d}({WEEKDAYS[now.weekday()]})", ""]
     if nudge_line:
@@ -125,6 +136,7 @@ def _assemble(cfg: Config, now: datetime, weather_result, events, failed, total,
     lines += _today_section(cfg, weather_result, events, failed, total)
     lines += tasks_lines
     lines += github_lines
+    lines += health_lines
     if cfg.watch_repos:   # no folders configured (e.g. on the server): leave the section out instead of claiming "no commits"
         lines.append(f"■ 어제({day:%m/%d}) 작업")
         any_work = False
@@ -151,13 +163,14 @@ def _assemble(cfg: Config, now: datetime, weather_result, events, failed, total,
 
 
 def build_message(cfg: Config, now: datetime, *, fetch_weather=weather.today, fetch_events=gcal.today_events,
-                  fetch_tasks=gtasks.fetch, fetch_github=github_brief.fetch) -> str:
+                  fetch_tasks=gtasks.fetch, fetch_github=github_brief.fetch, fetch_health=health.section) -> str:
     """Preview/dry-run path: gathers and assembles in one call, with NO highlight
     section -- stage 2b, like 2a, never runs on a preview (it is a paid call)."""
     weather_result, events, failed, total = _gather(cfg, now, fetch_weather, fetch_events)
     tasks_lines, nudge_line = _tasks_and_nudge(cfg, now, events, fetch_tasks)
     return _assemble(cfg, now, weather_result, events, failed, total, tasks_lines=tasks_lines,
-                     nudge_line=nudge_line, github_lines=_github_lines(cfg, now, fetch_github))
+                     nudge_line=nudge_line, github_lines=_github_lines(cfg, now, fetch_github),
+                     health_lines=_health_lines(cfg, now, fetch_health))
 
 
 def run(
@@ -171,6 +184,7 @@ def run(
     fetch_events=gcal.today_events,
     fetch_tasks=gtasks.fetch,
     fetch_github=github_brief.fetch,
+    fetch_health=health.section,
 ) -> int:
     """Exit codes: 0 ok (including 'already sent today' / quiet hours), 1 send failed, 2 setup problem.
 
@@ -194,7 +208,7 @@ def run(
 
     if not send:
         print(build_message(cfg, now, fetch_weather=fetch_weather, fetch_events=fetch_events,
-                            fetch_tasks=fetch_tasks, fetch_github=fetch_github))
+                            fetch_tasks=fetch_tasks, fetch_github=fetch_github, fetch_health=fetch_health))
         if State(path).is_seen(key):
             log.info("(오늘 인사는 이미 보냈습니다. --send 는 다시 보내지 않습니다.)")
         return 0
@@ -214,8 +228,9 @@ def run(
     )
     tasks_lines, nudge_line = _tasks_and_nudge(cfg, now, events, fetch_tasks)   # no lock held, like the other fetches
     github_lines = _github_lines(cfg, now, fetch_github)   # no lock held, like the other fetches
+    health_lines = _health_lines(cfg, now, fetch_health)   # no lock held, like the other fetches
     message = _assemble(cfg, now, weather_result, events, failed, total, highlight_lines, tasks_lines, nudge_line,
-                        github_lines)
+                        github_lines, health_lines)
 
     try:
         with locked(path):

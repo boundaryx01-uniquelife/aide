@@ -23,6 +23,11 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _open(req: urllib.request.Request, timeout: float) -> Any:
+    return _open_full(req, timeout)[0]
+
+
+def _open_full(req: urllib.request.Request, timeout: float):
+    """(parsed JSON body, response headers with lower-case names). Same safety rules as always."""
     if not req.full_url.lower().startswith("https://"):
         raise NetError("https 주소만 허용됩니다.")
     opener = urllib.request.build_opener(_NoRedirect)
@@ -30,6 +35,7 @@ def _open(req: urllib.request.Request, timeout: float) -> Any:
         with opener.open(req, timeout=timeout) as resp:
             raw = resp.read(MAX_BYTES + 1)
             ctype = (resp.headers.get("Content-Type") or "?").split(";")[0].strip()[:40]
+            hdrs = {str(k).lower(): str(v) for k, v in resp.headers.items()}
     except urllib.error.HTTPError as e:
         raise NetError(f"HTTP {e.code}", status=e.code) from None
     except (urllib.error.URLError, TimeoutError, OSError) as e:
@@ -41,9 +47,9 @@ def _open(req: urllib.request.Request, timeout: float) -> Any:
     if len(raw) > MAX_BYTES:
         raise NetError("응답이 너무 큽니다.")
     if not raw.strip():
-        return {}  # an empty 200 body means "nothing to list"
+        return {}, hdrs  # an empty 200 body means "nothing to list"
     try:
-        return json.loads(raw.decode("utf-8"))
+        return json.loads(raw.decode("utf-8")), hdrs
     except (ValueError, UnicodeDecodeError):
         # size and content type only: the body itself may hold secrets
         raise NetError(f"응답을 해석할 수 없습니다 (길이 {len(raw)}, {ctype}).") from None
@@ -51,6 +57,12 @@ def _open(req: urllib.request.Request, timeout: float) -> Any:
 
 def get_json(url: str, headers: Optional[Dict[str, str]] = None, timeout: float = 15) -> Any:
     return _open(urllib.request.Request(url, headers=headers or {}, method="GET"), timeout)
+
+
+def get_json_with_headers(url: str, headers: Optional[Dict[str, str]] = None, timeout: float = 15):
+    """Like `get_json` but returns (data, response headers with lower-case names). Same https-only,
+    no-redirect, size-capped, no-URL-in-errors behaviour."""
+    return _open_full(urllib.request.Request(url, headers=headers or {}, method="GET"), timeout)
 
 
 def post_form(url: str, data: Dict[str, str], timeout: float = 15) -> Any:
