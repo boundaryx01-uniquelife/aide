@@ -271,6 +271,9 @@ def render_help(cfg: Config, now: datetime) -> str:
         if ex:
             lines.append(ex)
         lines.append("※ 쓰신 문장은 AI(Anthropic)로 전송돼요. 비밀번호·개인정보는 쓰지 마세요.")
+    if cfg.memory_enabled:
+        lines += ["", "/기억 <글> 로 기억해 두고, /기억 으로 목록을 봐요 (지울 수 있어요).",
+                  "※ 적은 내용은 AI(Anthropic)로 전송돼요."]
     return "\n".join(lines)
 
 

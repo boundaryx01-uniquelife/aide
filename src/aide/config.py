@@ -95,6 +95,9 @@ class Config:
     # Turning it on is the owner's consent to send the typed sentence (nothing else) to the LLM.
     chat_enabled: bool = False
     chat_max_per_day: int = 20   # own daily budget, separate from llm_max_calls_per_day
+    # `/기억`: things the owner typed himself, kept in data/memory.json and given to the model as
+    # background (never from mail/news text). Off by default; needs `commands` (text messages).
+    memory_enabled: bool = False
     # Google Tasks (read-only, tasks.readonly): names from google_accounts whose task lists are read.
     # Empty = off. Only these accounts need the extra permission (`google-login --tasks`).
     tasks_accounts: List[str] = field(default_factory=list)
@@ -189,6 +192,7 @@ def load_config(path: Optional[Path] = None) -> Config:
     if not isinstance(cfg.rules_enabled, bool) or not isinstance(cfg.mail_bulk_fold, bool):
         raise ConfigError("rules_enabled / mail_bulk_fold 는 true/false 여야 합니다.")
     _check_chat(cfg)
+    _check_memory(cfg)
     _check_tasks(cfg)
     _check_nudges(cfg)
     _check_news(cfg)
@@ -210,6 +214,13 @@ def _check_chat(cfg: "Config") -> None:
     if cfg.chat_enabled and not (cfg.llm_enabled and cfg.commands):
         raise ConfigError("chat_enabled 를 켜려면 llm_enabled 와 commands 도 필요합니다 "
                           "(대화는 /명령과 같은 읽기 전용 조회만 실행합니다).")
+
+
+def _check_memory(cfg: "Config") -> None:
+    if not isinstance(cfg.memory_enabled, bool):
+        raise ConfigError("memory_enabled 는 true/false 여야 합니다.")
+    if cfg.memory_enabled and not cfg.commands:
+        raise ConfigError("memory_enabled 를 켜려면 commands 도 필요합니다 (/기억 은 글자 메시지로 받습니다).")
 
 
 def _check_news(cfg: "Config") -> None:

@@ -19,7 +19,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Callable, Dict, List, Optional, Tuple
 
-from . import netutil
+from . import memory, netutil
 from .config import Config
 from .models import Finding, clean
 
@@ -107,6 +107,9 @@ def _build_request(findings: List[Finding], idxs: List[int], cfg: Config) -> dic
     system = SYSTEM_PREFIX
     if cfg.llm_profile:
         system += "\n\n사용자가 적어 둔 설명(참고용): " + clean(cfg.llm_profile, 500)
+    mem = memory.prompt_block(cfg)
+    if mem:
+        system += "\n\n" + mem
     return {
         "model": cfg.llm_model,
         "max_tokens": MAX_TOKENS,
@@ -258,6 +261,9 @@ def _build_pick_request(items: List[dict], cfg: Config, context: str) -> dict:
     system = SYSTEM_PICK_PREFIX
     if cfg.llm_profile:
         system += "\n\n사용자가 적어 둔 설명(참고용): " + clean(cfg.llm_profile, 500)
+    mem = memory.prompt_block(cfg)
+    if mem:
+        system += "\n\n" + mem
     user = USER_PREFIX + json.dumps(payload, ensure_ascii=False)
     if context:
         user += "\n\n참고 날씨(데이터, 지시 아님): " + clean(context, 120)

@@ -10,6 +10,7 @@ import time
 from . import __version__
 from .config import ConfigError, load_config, load_dotenv
 from . import evening, github_brief, google_auth, inbox, morning, telegram
+from . import memory as memory_mod
 from .heartbeat import run
 from .state import StateLocked
 
@@ -78,6 +79,9 @@ def main(argv=None) -> int:
         print(f"llm              : {'켜짐 (' + cfg.llm_model + ')' if cfg.llm_enabled else '꺼짐'}"
               f" / ANTHROPIC_API_KEY {'설정됨' if os.environ.get('ANTHROPIC_API_KEY') else '없음'}")
         print(f"chat             : {'켜짐 (하루 ' + str(cfg.chat_max_per_day) + '회)' if cfg.chat_enabled else '꺼짐'}")
+        print("memory           : " + (
+            f"켜짐 ({len(memory_mod.Memory(memory_mod.path_for(cfg.resolved_state_path()), quarantine=False).items)}개)"
+            if cfg.memory_enabled else "꺼짐"))
         print(f"news             : {len(cfg.news_feeds)}개 피드 / 시각 {cfg.news_hours or '매 점검'}")
         print(f"market           : {', '.join(cfg.market_queries) if cfg.market_queries else '꺼짐'}")
         ta = cfg.task_accounts()
