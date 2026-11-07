@@ -240,3 +240,11 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 - **LLM 반영**: `llm._build_request`/`_build_pick_request` 는 `llm_profile` 바로 뒤에, `chat._build_request` 는 시스템 문맥 끝에 `사용자가 직접 적어 둔 기억(참고용, 사용자가 쓴 것): ` + 번호 목록을 붙인다(최대 3000자, 넘으면 최근 것 우선). 꺼짐·빈 목록·손상이면 요청 본문이 이전과 완전히 같다. 모델 출력은 계속 닫힌 값뿐이다.
 - **설정**: `memory_enabled: false`(켜려면 `commands` 필요, `load_config` 검사). `selfcheck` 에 `memory : 켜짐 (N개)`(내용은 출력 안 함). `.gitignore` 에 `data/memory.json(.tmp)`. 도움말(`render_help`)에 사용법과 Anthropic 전송 경고. 로그에는 개수·동작만 남기고 내용은 남기지 않는다.
 - **한계**: 항목 수정은 없다(지우고 다시 쓰기). 50개 목록이 4096자를 넘으면 삭제 후 목록 메시지는 다시 그리지 않고(버튼만 남음) 토스트로만 알린다. 기억이 모델 판단에 얼마나 영향을 주는지는 모델 몫이라 보장하지 않는다.
+
+## 고장 알림 · /연결 · 날씨에 따른 안내 — 구현 2026-11-07, 서버 배포 전 · 기본 꺼짐
+- **`health.py`** (`health_alerts`): `log_lines`(state 파일 옆 `aide.log` 끝 2MB, 어제 날짜의 ERROR/WARNING 을 `aide.<이름>` 로거별 고정 이름표로 집계, 본문 미사용; 오류≥1·"만료/권한" 경고·경고≥10 일 때만), `github_expiry`/`token_lines`(`netutil.get_json_with_headers` 로 `GET /user` 한 번, 헤더 `github-authentication-token-expiration`, 14일 이내만, KST 날짜 기준), `section`(아침 구역, 예외 삼킴), `check_auth`(heartbeat `--send` 의 조용한 시간 밖에서 계정마다 `access_token(need_scope=CAL_SCOPE)`; `GoogleAuthError` 만 알림, 키 `authalert:<날짜>:<계정>` 은 **전송 성공 뒤** 잠금 안에서 기록, 전송은 잠금 밖).
+- **`netutil.get_json_with_headers`**: `_open` 을 `_open_full`(본문, 소문자 헤더)로 나눴고 `_open`/`get_json` 의 동작과 오류 정책은 그대로.
+- **`/연결`** (`commands.render_connections`): `ALWAYS_ON = (도움, 연결)`; `State` 를 받지 않는 `(cfg, now)` 함수. 구글은 `token_has_scope` 로만, AI 는 설정+키 유무, GitHub 는 `health.github_expiry`.
+- **`weather_alerts.py`** (`weather_alerts`, `outdoor_keywords`): `weather.detail`(과거 1일 포함 예보: 최저·최고·강수확률·코드·풍속 m/s·전날 최저)와 `air_max`(대기질 그날 최댓값)로 `build_lines` 가 출근 → 야외 일정(≤2줄) → 교실 → 준비 순으로 고정 문구를 만들고 이미 쓴 요인은 반복하지 않는다. 최대 5줄, 없으면 구역 생략. 일정은 `morning/evening` 이 이미 모은 `events` 를 재사용(추가 조회 없음), 일정 줄은 `gcal.line`. 아침은 오프셋 0, 저녁은 1(일요일 주간 모드에서도 월요일 하루만). 조회는 잠금 밖, 드라이런=전송.
+- 위치: 아침은 오늘 일정 구역 다음에 날씨 안내, GitHub 구역 다음에 점검 구역. 저녁은 일정 구역 다음.
+- **한계**: 로그는 줄 형식(`basicConfig`)에 맞는 줄만 센다(트레이스백 줄 제외). GitHub 토큰 만료 확인은 아침마다 계정당 한 번 `GET /user`. 날씨는 설정된 한 지점 기준이며 시간대별 판단은 하지 않는다.
