@@ -98,6 +98,20 @@ class Config:
     # Google Tasks (read-only, tasks.readonly): names from google_accounts whose task lists are read.
     # Empty = off. Only these accounts need the extra permission (`google-login --tasks`).
     tasks_accounts: List[str] = field(default_factory=list)
+    # "먼저 챙겨 알리기" (ARCHITECTURE.md "먼저 챙기기"): one extra line in the morning / evening message.
+    # Allowed: "busy" (morning, 바쁜 날) and "prep" (evening, 내일 준비). [] = off. No LLM, no new calls.
+    nudges: List[str] = field(default_factory=list)
+    busy_events: int = 5   # "busy" shows when today has at least this many events (or any overlap)
+    # General news (news_feeds) only at these hours (e.g. [7, 12]); [] = at every check, as before.
+    news_hours: List[int] = field(default_factory=list)
+    # Intraday market headlines (checks/market_news.py): Google News searches, e.g. ["특징주", "상한가"].
+    # [] = off. Checked every heartbeat on weekdays 09:00-16:00, one line per stock per day.
+    market_queries: List[str] = field(default_factory=list)
+    market_exclude: List[str] = field(default_factory=lambda: ["리딩방", "무료 추천", "카톡방", "수익 보장"])
+    market_max_age_hours: int = 3
+    # GitHub activity in the morning greeting (github_brief.py): GitHub user names whose owned repos are
+    # watched. [] = off. Tokens come from the environment only (GITHUB_TOKEN_<NAME>, see .env.example).
+    github_accounts: List[str] = field(default_factory=list)
 
     def resolved_state_path(self) -> Path:
         return _resolve(self.state_path)
@@ -176,6 +190,9 @@ def load_config(path: Optional[Path] = None) -> Config:
         raise ConfigError("rules_enabled / mail_bulk_fold 는 true/false 여야 합니다.")
     _check_chat(cfg)
     _check_tasks(cfg)
+    _check_nudges(cfg)
+    _check_news(cfg)
+    _check_github(cfg)
     if cfg.rules_enabled and cfg.evening_hour is None:
         # The weekly "걸러낸 것" summary in the evening wrap-up is the only place a rule that hides
         # too much shows up, and it cannot be switched off on its own -- so rules need it.
@@ -195,6 +212,34 @@ def _check_chat(cfg: "Config") -> None:
                           "(대화는 /명령과 같은 읽기 전용 조회만 실행합니다).")
 
 
+def _check_news(cfg: "Config") -> None:
+    h = cfg.news_hours
+    if (not isinstance(h, list) or len(set(h)) != len(h)
+            or any(not isinstance(x, int) or isinstance(x, bool) or not 0 <= x <= 23 for x in h)):
+        raise ConfigError("news_hours 는 서로 다른 0~23 사이 정수 목록이어야 합니다 (예: [7, 12]).")
+    for name in ("market_queries", "market_exclude"):
+        v = getattr(cfg, name)
+        if (not isinstance(v, list) or len(v) > 10
+                or any(not isinstance(x, str) or not x.strip() or len(x) > 30 or "\n" in x for x in v)):
+            raise ConfigError(f"{name} 는 30자 이하 낱말의 목록(최대 10개)이어야 합니다.")
+    a = cfg.market_max_age_hours
+    if not isinstance(a, int) or isinstance(a, bool) or not 1 <= a <= 24:
+        raise ConfigError("market_max_age_hours 는 1~24 사이의 정수여야 합니다.")
+
+
+GITHUB_ACCOUNT = re.compile(r"^[A-Za-z0-9-]{1,39}$")
+MAX_GITHUB_ACCOUNTS = 5
+
+
+def _check_github(cfg: "Config") -> None:
+    g = cfg.github_accounts
+    if (not isinstance(g, list) or len(g) > MAX_GITHUB_ACCOUNTS
+            or any(not isinstance(n, str) or not GITHUB_ACCOUNT.match(n) for n in g)):
+        raise ConfigError(f"github_accounts 는 GitHub 사용자 이름(영문·숫자·-, 39자 이하)의 목록(최대 {MAX_GITHUB_ACCOUNTS}개)이어야 합니다.")
+    if len({n.lower() for n in g}) != len(g):
+        raise ConfigError("github_accounts 에 같은 이름이 중복되어 있습니다.")
+
+
 def _check_tasks(cfg: "Config") -> None:
     t = cfg.tasks_accounts
     if not isinstance(t, list) or any(not isinstance(n, str) or not n.strip() for n in t) or len(set(t)) != len(t):
@@ -206,6 +251,20 @@ def _check_tasks(cfg: "Config") -> None:
             raise ConfigError(f"tasks_accounts 에 google_accounts 에 없는 이름이 있습니다: {unknown}")
     elif len(t) > 1:
         raise ConfigError("계정이 하나뿐일 때 tasks_accounts 는 항목 하나만 쓸 수 있습니다.")
+
+
+NUDGE_NAMES = ("busy", "prep")
+
+
+def _check_nudges(cfg: "Config") -> None:
+    n = cfg.nudges
+    if not isinstance(n, list) or any(x not in NUDGE_NAMES for x in n):
+        raise ConfigError(f"nudges 는 {list(NUDGE_NAMES)} 중에서만 고를 수 있습니다.")
+    if len(set(n)) != len(n):
+        raise ConfigError("nudges 에 같은 값이 중복되어 있습니다.")
+    b = cfg.busy_events
+    if not isinstance(b, int) or isinstance(b, bool) or not 1 <= b <= 50:
+        raise ConfigError("busy_events 는 1~50 사이의 정수여야 합니다.")
 
 
 def _check_commands(commands) -> None:

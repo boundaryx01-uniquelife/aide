@@ -150,16 +150,41 @@ def lines(tasks: List[Task], failed: List[str], total: int, today: date, days: i
     return [f"■ {title}", *out, ""] if out else []
 
 
-def section(cfg: Config, now: datetime, *, kind: str, fetch_fn: Callable = fetch) -> List[str]:
-    """The morning / evening / Sunday-evening section. [] when the feature is off or empty. Never raises."""
+SPECS = {"morning": ("할 일 (오늘까지)", 0, True),
+         "evening": ("내일까지 할 일", 1, False),
+         "weekly": ("다음 주까지 할 일", 7, False)}
+
+
+def gather_safe(cfg: Config, fetch_fn: Callable = fetch) -> Optional[Tuple[List[Task], List[str], int]]:
+    """`gather` once; None when the feature is off or anything unexpected happens. Never raises.
+    The result feeds both `section_from` and `count_due`, so tasks are fetched only once per message."""
     if not cfg.task_accounts():
-        return []
-    spec = {"morning": ("할 일 (오늘까지)", 0, True),
-            "evening": ("내일까지 할 일", 1, False),
-            "weekly": ("다음 주까지 할 일", 7, False)}[kind]
+        return None
     try:
-        tasks, failed, total = gather(cfg, fetch_fn)
+        return gather(cfg, fetch_fn)
     except Exception:  # noqa: BLE001 -- a message must always go out
         log.exception("할 일 구역 처리 중 오류")
+        return None
+
+
+def count_due(tasks: List[Task], today: date, days: int) -> int:
+    """Dated tasks that are overdue or due on or before today+days (undated ones are not counted)."""
+    return len(split(tasks, today, days)[0])
+
+
+def section_from(cfg: Config, now: datetime, kind: str, tasks: List[Task], failed: List[str], total: int) -> List[str]:
+    """The morning / evening / Sunday-evening section from already-gathered tasks. [] when off or empty. Never raises."""
+    if not cfg.task_accounts():
         return []
-    return lines(tasks, failed, total, now.date(), spec[1], title=spec[0], show_undated=spec[2])
+    title, days, show_undated = SPECS[kind]
+    try:
+        return lines(tasks, failed, total, now.date(), days, title=title, show_undated=show_undated)
+    except Exception:  # noqa: BLE001
+        log.exception("할 일 구역 처리 중 오류")
+        return []
+
+
+def section(cfg: Config, now: datetime, *, kind: str, fetch_fn: Callable = fetch) -> List[str]:
+    """Gather + render in one call (kept for callers that need nothing else from the tasks)."""
+    data = gather_safe(cfg, fetch_fn)
+    return section_from(cfg, now, kind, *data) if data else []

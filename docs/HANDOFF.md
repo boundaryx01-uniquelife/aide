@@ -20,8 +20,11 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 | 7 | L4: 수신 거부 대행 | 기능 | 별도 보안 검토 필요 |
 | 8 | F: 공공데이터 연동 검토 | 기능 | 예정 |
 | 9 | 5: 코드 업데이트 에이전트 | 기능 | 보류 |
-| 10 | 대화 후속 B1: 일정에 종료 시각·여러 날 기간·장소 표시와 겹침·빈 시간 | 기능 | 예정 (설계부터, 사용자 검증에서 가장 큰 가치로 나옴) |
+| 10 | 대화 후속 B1: 일정에 종료 시각·여러 날 기간·장소 표시와 겹침·빈 시간 | 기능 | 완료 2026-11-07 (PR #16 병합·서버 반영, 실제 일정으로 겹침 3쌍 확인) |
 | 11 | 대화 후속 B2~B6: 일정 50건 상한·잘림 안내, 메일 검색 확장(별도 보안 검토), 이전 대화 기억(보안 검토), 주간 날씨·지역, 처리 중 표시 | 기능 | 예정 |
+| 12 | 먼저 챙기기 1단계: 바쁜 날(아침)·내일 준비(저녁) | 기능 | 구현 완료, PR 전 |
+| 13 | 먼저 챙기기 2단계: 다음 일정 30~60분 전 알림 | 기능 | 보류(1단계 써 본 뒤 결정) |
+| 14 | GitHub 아침 브리핑(계정 전체, 실패 알림) | 기능 | 구현 완료, PR 전 · 토큰 등록 필요(사용자) |
 
 - 하지 않기로 함: 4번(메일 답장 초안). 개인 일정 알림 외 "기억해서 챙기기"(한 줄 캡처 등)는 L 단계가 끝난 뒤 다시 논의.
 - 별도 정리 항목은 아래 "남은 정리" 참고(PC 예약 작업 삭제 여부 확인 등).
@@ -111,6 +114,33 @@ Claude Code 는 작업 시작 전에 이 파일을 먼저 읽는다. 상태가 �
 - 테스트 635개 통과(기존 582 + 신규 53).
 - **남은 일**: ① PR 병합("병합") ② Google Cloud 프로젝트(340195897630)에서 Tasks API 켜기 — Claude 가 브라우저로, 또는 사용자 ③ PC: `python -m aide google-login --account 개인 --tasks` (동의 화면에서 할 일 체크) ④ 서버: `data/google_token_personal.json` 복사 + chown/chmod 600 ⑤ 서버 `config.json` 에 `"tasks_accounts": ["개인"]`, `commands` 에 `"할일"` 추가 → `aide-watch` 재시작 → selfcheck `tasks` 줄 "권한 있음" 확인 → `morning` 미리보기와 텔레그램 `/할일` 확인 ⑥ 켠 날짜를 SECURITY.md 에 기록.
 - 알려진 한계: 읽기 전용. 하위 작업은 각자의 마감일로 나옴. 구글 할 일에는 시각이 없음.
+
+## 장중 특징주·뉴스 시각 구현 완료 — 브랜치 feat/market-news, PR 전 · 서버 설정 전
+- 내용: `news_hours`(일반 뉴스 시각), `market_queries`(구글 뉴스 검색어, 평일 09:00~16:00 30분마다 새 기사만, 종목별 한 줄·기사 N건, 하루 한 번), `market_exclude`, `market_max_age_hours`. 모두 기본 꺼짐/기존 동작. LLM 미사용. 사용자 결정(2026-11-06): 키워드는 특징주·상한가·거래량 급증·테마주·장중 시황 계열, 시세 순위는 stock-signal 몫, aide 는 관련 뉴스 헤드라인만, 일반 뉴스 7·12시, 메일은 하루 2번(서버 설정만: `mail_senders: []`, `mail_recent_hours: [8, 18]`).
+- 새 파일: `src/aide/checks/market_news.py`, `tests/test_market_news.py`. 바뀐 파일: `heartbeat.py`(collect 시각 제한·market 섹션), `config.py`, `checks/news_keywords.py`(`strip_source`), `__main__.py`(selfcheck), 문서, `config.example.json`.
+- 실제 구글 뉴스로 시험: 5개 검색어로 24시간 기준 104건이 나오고 종목 묶음이 동작함(미국 종목 기사는 이름 부분이 길게 잡힐 수 있음).
+- **서버 적용**: 병합 → `fetch`+`merge --ff-only` → `config.json` 에 `"news_hours": [7, 12]`, `"market_queries": ["특징주", "상한가", "거래량 급증", "테마주", "장중 시황"]` 추가(메일은 `"mail_senders": []`, `"mail_recent_hours": [8, 18]`) → `aide-watch` 재시작 → selfcheck 의 `news`·`market` 줄 확인 → 평일 장중 알림 확인.
+- 알려진 한계: 구글 뉴스 RSS 지연(수십 분), 공휴일 미구분, 종목 이름은 `[특징주] 이름, …` 모양일 때만 뽑음.
+
+
+## 일정 상세 B1 구현 완료 — 브랜치 feat/calendar-details, PR 전 · 서버 반영 전
+- 내용: 일정에 끝 시각·여러 날 기간·장소·겹침(`⚠ 겹침`) 표시, 전날 시작 일정이 "오늘 18:00" 처럼 보이던 버그 수정(`(진행 중, ~10/23) 제목`). 빈 시간 찾기는 하지 않음. 읽기 전용 그대로. 설계: ARCHITECTURE.md "일정 상세 (B1)".
+- 바뀐 파일: `gcal.py`(필드·파싱·`line`/`lines`/`overlaps`/`order`), `commands.py`, `morning.py`, `evening.py`, `accounts.py`(병합 시 끝·장소 채움), `tests/test_calendar_details.py`(신규), 문서(README/ARCHITECTURE/SECURITY/PRIVACY).
+- 테스트 690개 통과(기존 658 + 신규 32), 기존 테스트 기대값은 바꾸지 않음.
+- 남은 일: PR 병합("병합") → 서버 `fetch`+`merge --ff-only` → `aide-watch` 재시작 → `/일정` 으로 실제 확인. 설정 변경 없음.
+- 알려진 한계: 2b "오늘의 핵심" 줄은 시작 `when` 을 그대로 써서 이어지는 일정이면 원래 시작 시각이 보인다. 종일 일정은 겹침 대상이 아님.
+
+## 먼저 챙기기 1단계 구현 완료 — 브랜치 feat/nudges, PR 전 · 서버 반영 전
+- 내용: `nudges: ["busy","prep"]`(기본 꺼짐), `busy_events`(기본 5). 아침 "⚠ 바쁜 날" 한 줄, 저녁 "▶ 내일 준비" 한 줄. LLM·새 호출 없음. 설계: ARCHITECTURE.md "먼저 챙기기 1단계".
+- 바뀐 파일: `nudges.py`(신규), `gtasks.py`(`gather_safe`/`section_from`/`count_due`, `section` 유지), `morning.py`/`evening.py`(할 일 한 번 조회 + 줄), `config.py`, `__main__.py`(selfcheck), `config.example.json`, `tests/test_nudges.py`(신규), 문서.
+- 테스트 716개 통과(기존 690 + 신규 26), 기존 기대값 변경 없음.
+- 남은 일: PR 병합 → 서버 반영 → `config.json` 에 `"nudges": ["busy","prep"]` → `aide-watch` 재시작 → selfcheck `nudges` 줄 확인 → 아침·저녁 미리보기로 확인.
+
+## GitHub 아침 브리핑 구현 완료 — 브랜치 feat/github-brief, PR 전 · 서버 반영 전
+- 내용: `github_accounts`(기본 `[]`)의 계정 전체를 자동으로 보고 아침 인사에 어제 활동·Actions 실패 구역 추가. LLM 안 씀. 설계: ARCHITECTURE.md "GitHub 아침 브리핑", 보안: SECURITY.md.
+- 바뀐 파일: `github_brief.py`(신규), `morning.py`(`fetch_github=`), `config.py`, `__main__.py`(selfcheck), `config.example.json`, `.env.example`, `tests/test_github_brief.py`(신규), 문서.
+- 테스트 757개 통과(기존 716 + 신규 41).
+- 남은 일: PR 병합 → 사용자가 계정별 fine-grained 토큰(All repositories, Metadata·Contents·Pull requests·Actions Read-only) 발급 → 서버 `.env` 에 `GITHUB_TOKEN_BOUNDARYX01_UNIQUELIFE`, `GITHUB_TOKEN_FORUNIQUELIFE00` → `config.json` 에 `github_accounts` → `aide-watch` 재시작 → selfcheck `github` 줄 확인 → `morning` 미리보기로 확인.
 
 ## 최근 건드린 파일
 - 3b 명령: 위 섹션 참고.

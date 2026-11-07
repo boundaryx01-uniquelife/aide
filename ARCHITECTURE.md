@@ -37,6 +37,11 @@
 | `src/aide/inbox.py` | 수신: 3a 버튼 처리 + 3b 명령 허용 검사·속도 제한. 실행은 `commands.py` 에 위임 |
 | `src/aide/commands.py` | 3b 명령 이름 해석과 명령별 조회(`REGISTRY`). `State` 를 받지 않는 읽기 전용 함수들 |
 | `src/aide/chat.py` | C1 문장 → 닫힌 조회 요청 변환·검증과 답장 조립. 모델은 본인 문장만 본다 |
+| `src/aide/github_brief.py` | 아침 인사의 GitHub 구역(어제 커밋·PR·Actions 실패 개수). 읽기 전용, LLM 없음 |
+
+## 장중 특징주와 뉴스 시각
+- `checks/market_news.py`: `market_queries` 낱말마다 구글 뉴스 검색 RSS(`when:1d`)를 읽고, 제목·요약에 그 낱말이 있고 `market_exclude` 낱말이 없고 `market_max_age_hours` 이내인 기사만 남긴다. `[특징주] 종목, …` 모양의 제목은 종목 이름으로, 그 밖은 정규화한 제목으로 묶어 한 줄(`Finding(source="market")`)로 만든다. 키는 `market:<날짜>:<묶음>` 이라 한 종목은 하루 한 번만 알린다.
+- `heartbeat.collect()`: 일반 뉴스는 `news_hours` 에 현재 시(時)가 있을 때만(비면 매번), 장중 줄은 평일 09:00~16:00 에만 모은다. 드라이런(`preview=True`)은 두 제한을 무시한다. `format_digest` 는 `market` 섹션을 맨 위에 둔다. `llm_sources` 에 `market` 이 없으므로 LLM 에는 가지 않는다.
 
 ## 새 검사 추가하는 법
 `checks/` 에 `check(...) -> list[Finding]` 함수를 만들고 `heartbeat.collect()` 에 한 줄 추가한다.
@@ -189,7 +194,7 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 - **`commands.py` 확장**: `render_week(first, days, only, keyword)`, `render_due(days, keyword)`, `render_mail(days, only, keyword)`, 새 `render_weather(offset)`, 새 명령 `/날씨`(`weather`). 인자는 모두 선택이라 `/명령` 의 동작은 그대로다. 키워드는 가져온 결과를 로컬에서 거르는 데만 쓴다. `accounts.gather_events(only=...)` 는 한 계정만 읽되 여러 계정 보기의 `[이름]` 표시를 유지한다. `weather.on_day(offset)` 은 오늘부터 6일 뒤까지.
 - **`inbox.py`**: `process_updates(chat_max_per_day=...)` 가 문장을 `ChatRequest` 로 `to_run` 에 넣는다(0 이면 꺼짐). 묶음당 3개는 명령과 공유하고, 시간당(`chat.MAX_PER_HOUR`, `State.chat_times`)과 하루(`State.chat_calls`) 예산은 대화 전용이다. 안내 답장은 `Notice` 로 같은 목록에 담겨 잠금을 푼 뒤 보내지고(종류당 묶음당 1번), 시작 offset 보다 작은 번호의 글자 메시지는 재전달로 보고 건너뛴다. `poll_once` 는 긴 대기가 끝난 **뒤** 시각을 잡고, 잠금 밖에서 `chat.answer_full` 을 호출한 뒤 답이 만들어지지 않은 건(`nokey`/`net`/예외)은 잠금을 다시 잡아 `State.refund_chat_call` 로 환불한다. API 키는 `ANTHROPIC_API_KEY` 환경변수.
 - **설정**: `chat_enabled: false`, `chat_max_per_day: 20`. 켜려면 `llm_enabled` 와 `commands` 가 필요하다(`load_config` 가 검사). `selfcheck` 에 한 줄. `COMMAND_NAMES` 에 `날씨` 추가.
-- **한계**: 날짜 범위 일정은 오늘-62일~+60일, 최대 31일. 메일은 최근 7일까지, 키워드 검색은 최신 안 읽은 20건 안(제목·보낸 사람 표시만, 계정 라벨은 매칭 대상이 아님). 날씨는 오늘부터 6일 뒤까지, 하루씩, 설정된 위치 기준. 마감은 오늘부터 N일(시작일 무시). 일정은 캘린더당 50건에서 잘린다(알림 없음, B2 후보). 일정에는 종료 시각·기간·장소가 없다(B1 후보). 오전/오후는 구분하지 못하고 문장에 그런 말이 있으면 알린다. 대화는 문장 하나씩이며 이전 대화를 기억하지 않는다.
+- **한계**: 날짜 범위 일정은 오늘-62일~+60일, 최대 31일. 메일은 최근 7일까지, 키워드 검색은 최신 안 읽은 20건 안(제목·보낸 사람 표시만, 계정 라벨은 매칭 대상이 아님). 날씨는 오늘부터 6일 뒤까지, 하루씩, 설정된 위치 기준. 마감은 오늘부터 N일(시작일 무시). 일정은 캘린더당 50건에서 잘린다(알림 없음, B2 후보). 오전/오후는 구분하지 못하고 문장에 그런 말이 있으면 알린다. 대화는 문장 하나씩이며 이전 대화를 기억하지 않는다.
 
 ## 구글 할 일 — 구현 완료 2026-10-22, 서버 배포 전
 - **`gtasks.py`**: `Task(title, due, list_title, account)`, `fetch(token)`(목록 → 목록별 할 일, 한 목록 실패는 건너뛰고 전부 실패면 예외), `gather(cfg, fetch_fn, only)`(`tasks_accounts` 계정마다 `access_token(need_scope=TASKS_SCOPE)` → 읽기, 한 계정 실패가 다른 계정을 막지 않음, 계정이 둘 이상이면 `[이름]` 표시), `split`/`when_text`/`task_line`/`lines`(표시), `section(cfg, now, kind)`(아침·저녁·일요일 저녁 구역, 끄면 `[]`, 예외 안 냄).
@@ -198,3 +203,30 @@ collect() ──► 새 항목(new) ──► llm.rank(new, cfg)   ← 상태 �
 - **권한**: `google_auth.TASKS_SCOPE`. `login(tasks=True)` 만 이 권한을 더해 요청하고, 허용 여부를 확인해 알려 준다. `token_has_scope()` 로 `selfcheck` 가 "권한 있음/없음"을 보여 준다(토큰 내용은 출력 안 함). 설정 `tasks_accounts`(google_accounts 이름 목록, 기본 `[]` = 꺼짐).
 - 아침·저녁은 `fetch_tasks=` 를 받아 시험에서 가짜로 바꿀 수 있고, 조회는 잠금 밖에서 한다.
 - **한계**: 완료 처리·추가는 못 한다(읽기 전용). 하위 작업은 각자의 마감일로 나온다(부모와 묶어 보여 주지 않음). 반복 할 일은 구글이 만든 다음 항목만 보인다.
+
+## GitHub 아침 브리핑 — 구현 완료 2026-11-07, 서버 배포 전 · 기본 꺼짐
+- 설정: `github_accounts`(GitHub 사용자 이름 목록, 최대 5, 대소문자 무시 중복 금지, 기본 `[]`). 토큰은 `.env` 의 `GITHUB_TOKEN_<이름 대문자, -→_>`(`github_brief.token_env_name`).
+- **`github_brief.py`**: `fetch(cfg, now, get=netutil.get_json, environ=None)` → 구역 줄 `[]` 또는 `■ GitHub (어제 MM/DD)` … 빈 줄. 어떤 예외도 삼킨다. 호스트는 `https://api.github.com` 하나, 헤더는 `Authorization: Bearer`·`Accept`·`X-GitHub-Api-Version`.
+- 계정마다 `/user/repos?affiliation=owner`(최대 3쪽×100, 보관 저장소·이상한 이름 제외) → 저장소마다 Actions 실패(`created=UTC 범위`, 전 저장소), `pushed_at` 이 어제 시작 이후인 저장소만 커밋 수·병합 PR 수(`merged_at` 범위 필터)·열린 PR 수. "어제"는 KST 전날 00:00~24:00 을 UTC 로 바꿔 보낸다. 한 호출 실패는 그 부분만 건너뛴다. 전체 시간 상한 120초(넘으면 남은 저장소 생략).
+- **표시**: 계정 오류 줄 → ⚠ 실패 줄 → • 활동 줄(커밋 많은 순), 최대 10줄 + `…외 N개`. 커밋 메시지·PR 제목은 요청 결과에서 읽지 않는다.
+- **`morning.py`**: `fetch_github=` 주입. 조회는 상태 잠금 밖에서 한 번, 드라이런·전송이 같은 구역, 할 일 구역 다음. 예외는 `_github_lines` 가 구역만 빼고 삼킨다.
+- **한계**: 기본 브랜치 밖 커밋, 100개 넘는 커밋(`100+`), 어제 병합이 30번째 최근 수정 PR 밖인 경우, Actions 권한이 없는 토큰(실패가 조용히 안 보임)은 정확하지 않다. 조직 소유·협업 저장소는 `affiliation=owner` 라 빠진다.
+
+## 일정 상세 (B1) — 구현 완료 2026-11-07, 서버 배포 전
+- **`gcal.Event`** 끝에 필드 추가(기본값 있음): `end`("HH:MM", 시간 일정만), `end_day`(마지막 날), `location`(`clean` 40자), `began`(`day` 를 조회 첫날로 옮겼을 때 원래 시작일). 조회 `fields` 에 `end,location` 추가.
+- **파싱**: 시간 일정은 end.dateTime 을 KST 로 바꿔 쓰고, 정확히 00:00 이면 `end_day` 는 전날. 종일 일정의 end.date 는 구글이 배타적(다음 날)이라 하루를 빼서 `end_day`. 끝이 이상하면 끝 정보만 비우고 일정은 그대로 둔다.
+- **표시는 `gcal.line(e, on_day)` 한 곳**: `09:00~10:30 제목`, `18:00~10/22 10:00 제목`, `종일 ~10/23 제목`, 이어지는 일정은 `(진행 중, ~10/23) 제목`(가짜 시작 시각 없음), 장소는 끝에 ` @장소`. `gcal.lines(events)` 는 여기에 겹침 표시를 붙인다. `commands.render_today/render_week`, 아침, 저녁(평일·일요일)이 모두 이것을 쓴다.
+- **어제 시작 일정 버그**: `today_events` 와 `events_between` 이 같은 `_shift` 로 조회 첫날보다 앞서 시작한 일정의 `day` 를 첫날로 두고 `began` 에 원래 시작일을 보존한다. 정렬은 `gcal.order`(종일 → 진행 중 → 시간 일정).
+- **겹침**: `gcal.overlaps(events)` 는 같은 표시 날짜의 시간 일정 중 끝 시각이 있는 것끼리 [시작, 끝) 이 겹치면 인덱스 집합에 넣는다. 맞닿음·종일·진행 중·끝 없음은 제외. 로컬 계산, LLM 안 씀. 다른 날에 걸친 일정은 시작일 24:00 까지로 본다.
+- **병합**: `accounts.gather_events` 키는 그대로 (day, when, title). 같은 일정이 두 계정에 있으면 끝·장소가 있는 쪽 정보를 채운다. 표시는 `09:00~10:00 [개인·학교] 제목 @장소`.
+- **LLM**: 2b 후보(`when` + `title`)는 그대로. 끝 시각·장소는 보내지 않는다(테스트로 고정).
+- **한계**: 빈 시간 찾기 없음. 종일 일정은 겹침 대상이 아님. 2b 후보와 "오늘의 핵심" 줄은 `when`(시작 시각)을 그대로 써서, 이어지는 일정이면 원래 시작 시각이 보인다. 일정은 캘린더당 50건 상한 그대로.
+
+## 먼저 챙기기 1단계 (nudges) — 구현 완료 2026-11-07, 서버 배포 전 · 기본 꺼짐
+- 설정: `nudges`(`"busy"`, `"prep"`, 중복 금지, 기본 `[]`), `busy_events`(1~50, 기본 5). LLM·새 외부 호출·새 권한 없음. 이미 모은 일정·할 일로만 계산한다.
+- **`nudges.py`**: `busy_line(cfg, events, task_count)`(아침), `prep_line(cfg, now, events, task_count)`(저녁), `first_event`. 어떤 오류도 `""` 로 삼켜 메시지를 막지 않는다.
+- **바쁜 날(아침)**: 머리줄 바로 다음에 `⚠ 바쁜 날: 일정 6개 · 겹치는 일정 2개 · 오늘까지 할 일 3개`. 일정 수 >= `busy_events` 이거나 겹침이 있을 때만. 겹침 0 이면 그 부분, 할 일 0 이거나 꺼짐이면 할 일 부분 생략.
+- **내일 준비(저녁)**: 머리줄 바로 다음에 `▶ 내일 준비: 첫 일정 08:30~10:00 출장 @본관 · 내일까지 할 일 2개`. 첫 일정은 내일(`day == 내일`, 일요일은 월요일) 시간 일정 중 가장 이른 것(전날부터 이어지는 일정 제외), 없으면 종일/진행 중 첫 일정. 둘 다 없으면 줄 생략. 할 일 수는 일요일에도 "내일까지".
+- **할 일 한 번만 조회**: `gtasks.gather_safe`(조회 1회, 실패·꺼짐이면 None) → `gtasks.section_from(cfg, now, kind, tasks, failed, total)`(구역 줄) + `gtasks.count_due(tasks, today, days)`(지난 것+기한 내 개수). `gtasks.section()` 은 둘을 묶어 호환용으로 남김. 조회는 상태 잠금 밖. 드라이런(`build_message`)과 전송(`run`)이 같은 `_tasks_and_nudge` 를 쓴다.
+- 2b LLM 입력은 그대로(줄 문구·개수는 모델에 보내지 않음).
+- **한계**: 겹침은 끝 시각이 있는 시간 일정끼리만. 종일 일정은 일정 수에는 들어가지만 겹침 대상이 아님. 계정 불러오기 실패 시 그 계정 몫은 빠진 채 계산된다.

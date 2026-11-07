@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from . import accounts, gcal, gtasks, llm, netutil, rules as rules_mod, telegram
+from . import accounts, gcal, gtasks, llm, netutil, nudges, rules as rules_mod, telegram
 from .checks import git_dirty, news_keywords, notice_pages, yesterday
 from .config import Config
 from .heartbeat import in_quiet_hours
@@ -45,11 +45,11 @@ def _gather(cfg: Config, now: datetime, fetch_events, fetch_week, fetch):
             first = (now + timedelta(days=1)).date()
             events, failed, total = accounts.gather_events(
                 cfg, lambda token: fetch_week(token, first, 7),
-                lambda e: (e.day or first, e.when != "종일", e.when))
+                lambda e: (e.day or first,) + gcal.order(e))
         else:
             events, failed, total = accounts.gather_events(
                 cfg, lambda token: fetch_events(token, now + timedelta(days=1)),
-                lambda e: (e.when != "종일", e.when))
+                gcal.order)
     rows = []
     if cfg.notice_pages:
         days = WEEK_DEADLINE_DAYS if weekly else DEADLINE_DAYS
@@ -68,13 +68,13 @@ def _calendar_section(cfg: Config, now: datetime, events, failed, total) -> List
         if not events and not failed:
             out.append("일정이 없어요.")
         last: Optional[date] = None
-        for e in events:
+        for e, text in zip(events, gcal.lines(events)):
             if e.day != last:
                 last = e.day
                 out.append(f"{e.day:%m/%d}({WEEKDAYS[e.day.weekday()]})" if e.day else "")
-            out.append(f"  • {e.when} {e.title}")
+            out.append(f"  • {text}")
     else:
-        out += [f"• {e.when} {e.title}" for e in events]
+        out += [f"• {t}" for t in gcal.lines(events)]
         if not events and not failed:
             out.append("일정이 없어요.")
     out += accounts.failure_lines(failed, total)
@@ -144,8 +144,10 @@ def hidden_lines(cfg: Config, now: datetime) -> List[str]:
 
 
 def _assemble(cfg: Config, now: datetime, events, failed, total, rows, highlight_lines=(), hidden=(),
-              tasks_lines=()) -> str:
+              tasks_lines=(), nudge_line="") -> str:
     lines = [f"저녁 정리 · {now:%m/%d}({WEEKDAYS[now.weekday()]})", ""]
+    if nudge_line:
+        lines += [nudge_line, ""]
     if highlight_lines:
         header = "이번 주 핵심" if _is_weekly(now) else "내일의 핵심"
         lines += [f"■ {header} (AI 판단)", *highlight_lines, ""]
@@ -180,8 +182,13 @@ def _assemble(cfg: Config, now: datetime, events, failed, total, rows, highlight
     return "\n".join(lines).rstrip()
 
 
-def _tasks_lines(cfg: Config, now: datetime, fetch_tasks) -> List[str]:
-    return gtasks.section(cfg, now, kind="weekly" if _is_weekly(now) else "evening", fetch_fn=fetch_tasks)
+def _tasks_and_nudge(cfg: Config, now: datetime, events, fetch_tasks):
+    """Fetch tasks ONCE; build both the tasks section and the optional "내일 준비" line from the result.
+    Never raises (a failure only drops what it feeds)."""
+    data = gtasks.gather_safe(cfg, fetch_tasks)
+    tasks_lines = gtasks.section_from(cfg, now, "weekly" if _is_weekly(now) else "evening", *data) if data else []
+    count = gtasks.count_due(data[0], now.date(), 1) if data else 0   # "내일까지", also on Sunday
+    return tasks_lines, nudges.prep_line(cfg, now, events, count)
 
 
 def build_message(cfg: Config, now: datetime, *, fetch_events=gcal.today_events,
@@ -189,8 +196,9 @@ def build_message(cfg: Config, now: datetime, *, fetch_events=gcal.today_events,
     """Preview/dry-run path: gathers and assembles in one call, with NO highlight
     section -- stage 2b, like 2a, never runs on a preview (it is a paid call)."""
     events, failed, total, rows = _gather(cfg, now, fetch_events, fetch_week, fetch)
+    tasks_lines, nudge_line = _tasks_and_nudge(cfg, now, events, fetch_tasks)
     return _assemble(cfg, now, events, failed, total, rows, hidden=hidden_lines(cfg, now),
-                     tasks_lines=_tasks_lines(cfg, now, fetch_tasks))
+                     tasks_lines=tasks_lines, nudge_line=nudge_line)
 
 
 def run(cfg: Config, *, send: bool = False, force: bool = False, now: Optional[datetime] = None,
@@ -238,8 +246,8 @@ def run(cfg: Config, *, send: bool = False, force: bool = False, now: Optional[d
         api_key=os.environ.get("ANTHROPIC_API_KEY", ""), call_status=call_status,
     )
     hidden = hidden_lines(cfg, now)
-    tasks_lines = _tasks_lines(cfg, now, fetch_tasks)   # no lock held, like the other fetches
-    message = _assemble(cfg, now, events, failed, total, rows, highlight_lines, hidden, tasks_lines)
+    tasks_lines, nudge_line = _tasks_and_nudge(cfg, now, events, fetch_tasks)   # no lock held, like the other fetches
+    message = _assemble(cfg, now, events, failed, total, rows, highlight_lines, hidden, tasks_lines, nudge_line)
     extra = {"buttons": [[("📋 규칙 목록", "r:list")]]} if hidden else {}
 
     try:

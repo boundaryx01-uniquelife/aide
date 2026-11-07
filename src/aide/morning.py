@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from . import accounts, gcal, gtasks, llm, netutil, telegram, weather
+from . import accounts, gcal, github_brief, gtasks, llm, netutil, nudges, telegram, weather
 from .checks import git_dirty, yesterday
 from .config import Config
 from .heartbeat import in_quiet_hours
@@ -40,7 +40,7 @@ def _gather(cfg: Config, now: datetime, fetch_weather, fetch_events):
     events, failed, total = [], [], 0
     if cfg.calendar_enabled:
         events, failed, total = accounts.gather_events(
-            cfg, lambda token: fetch_events(token, now), lambda e: (e.when != "종일", e.when))
+            cfg, lambda token: fetch_events(token, now), gcal.order)
     return weather_result, events, failed, total
 
 
@@ -53,7 +53,7 @@ def _today_section(cfg: Config, weather_result, events, failed, total) -> List[s
     if cfg.calendar_enabled:
         out.append("■ 오늘 일정")
         if events:
-            out += [f"• {e.when} {e.title}" for e in events]
+            out += [f"• {t}" for t in gcal.lines(events)]
         elif not failed:
             out.append("일정이 없어요.")
         out += accounts.failure_lines(failed, total)
@@ -94,14 +94,37 @@ def highlight_picks(
     return [f"• {candidates[i].when} {candidates[i].title} — {llm.WHY_PHRASES[why]}" for i, why in picks]
 
 
+def _tasks_and_nudge(cfg: Config, now: datetime, events, fetch_tasks):
+    """Fetch tasks ONCE; build both the tasks section and the optional "바쁜 날" line from the result.
+    Never raises (a failure only drops what it feeds)."""
+    data = gtasks.gather_safe(cfg, fetch_tasks)
+    tasks_lines = gtasks.section_from(cfg, now, "morning", *data) if data else []
+    count = gtasks.count_due(data[0], now.date(), 0) if data else 0
+    return tasks_lines, nudges.busy_line(cfg, events, count)
+
+
+def _github_lines(cfg: Config, now: datetime, fetch_github) -> List[str]:
+    """GitHub section, fetched once outside the state lock. Never raises (a failure drops only this section)."""
+    if not cfg.github_accounts:
+        return []
+    try:
+        return list(fetch_github(cfg, now))
+    except Exception:  # noqa: BLE001
+        log.exception("GitHub 구역 조회 중 오류")
+        return []
+
+
 def _assemble(cfg: Config, now: datetime, weather_result, events, failed, total, highlight_lines=(),
-              tasks_lines=()) -> str:
+              tasks_lines=(), nudge_line="", github_lines=()) -> str:
     day = (now - timedelta(days=1)).date()
     lines = [f"좋은 아침이에요 · {now:%m/%d}({WEEKDAYS[now.weekday()]})", ""]
+    if nudge_line:
+        lines += [nudge_line, ""]
     if highlight_lines:
         lines += ["■ 오늘의 핵심 (AI 판단)", *highlight_lines, ""]
     lines += _today_section(cfg, weather_result, events, failed, total)
     lines += tasks_lines
+    lines += github_lines
     if cfg.watch_repos:   # no folders configured (e.g. on the server): leave the section out instead of claiming "no commits"
         lines.append(f"■ 어제({day:%m/%d}) 작업")
         any_work = False
@@ -128,12 +151,13 @@ def _assemble(cfg: Config, now: datetime, weather_result, events, failed, total,
 
 
 def build_message(cfg: Config, now: datetime, *, fetch_weather=weather.today, fetch_events=gcal.today_events,
-                  fetch_tasks=gtasks.fetch) -> str:
+                  fetch_tasks=gtasks.fetch, fetch_github=github_brief.fetch) -> str:
     """Preview/dry-run path: gathers and assembles in one call, with NO highlight
     section -- stage 2b, like 2a, never runs on a preview (it is a paid call)."""
     weather_result, events, failed, total = _gather(cfg, now, fetch_weather, fetch_events)
-    return _assemble(cfg, now, weather_result, events, failed, total,
-                     tasks_lines=gtasks.section(cfg, now, kind="morning", fetch_fn=fetch_tasks))
+    tasks_lines, nudge_line = _tasks_and_nudge(cfg, now, events, fetch_tasks)
+    return _assemble(cfg, now, weather_result, events, failed, total, tasks_lines=tasks_lines,
+                     nudge_line=nudge_line, github_lines=_github_lines(cfg, now, fetch_github))
 
 
 def run(
@@ -146,6 +170,7 @@ def run(
     fetch_weather=weather.today,
     fetch_events=gcal.today_events,
     fetch_tasks=gtasks.fetch,
+    fetch_github=github_brief.fetch,
 ) -> int:
     """Exit codes: 0 ok (including 'already sent today' / quiet hours), 1 send failed, 2 setup problem.
 
@@ -169,7 +194,7 @@ def run(
 
     if not send:
         print(build_message(cfg, now, fetch_weather=fetch_weather, fetch_events=fetch_events,
-                            fetch_tasks=fetch_tasks))
+                            fetch_tasks=fetch_tasks, fetch_github=fetch_github))
         if State(path).is_seen(key):
             log.info("(오늘 인사는 이미 보냈습니다. --send 는 다시 보내지 않습니다.)")
         return 0
@@ -187,8 +212,10 @@ def run(
         cfg, events, weather_result, now=now, calls_today=State(path).llm_calls_today(now),
         api_key=os.environ.get("ANTHROPIC_API_KEY", ""), call_status=call_status,
     )
-    tasks_lines = gtasks.section(cfg, now, kind="morning", fetch_fn=fetch_tasks)   # no lock held, like the other fetches
-    message = _assemble(cfg, now, weather_result, events, failed, total, highlight_lines, tasks_lines)
+    tasks_lines, nudge_line = _tasks_and_nudge(cfg, now, events, fetch_tasks)   # no lock held, like the other fetches
+    github_lines = _github_lines(cfg, now, fetch_github)   # no lock held, like the other fetches
+    message = _assemble(cfg, now, weather_result, events, failed, total, highlight_lines, tasks_lines, nudge_line,
+                        github_lines)
 
     try:
         with locked(path):

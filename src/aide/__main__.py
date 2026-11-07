@@ -9,7 +9,7 @@ import time
 
 from . import __version__
 from .config import ConfigError, load_config, load_dotenv
-from . import evening, google_auth, inbox, morning, telegram
+from . import evening, github_brief, google_auth, inbox, morning, telegram
 from .heartbeat import run
 from .state import StateLocked
 
@@ -78,8 +78,14 @@ def main(argv=None) -> int:
         print(f"llm              : {'켜짐 (' + cfg.llm_model + ')' if cfg.llm_enabled else '꺼짐'}"
               f" / ANTHROPIC_API_KEY {'설정됨' if os.environ.get('ANTHROPIC_API_KEY') else '없음'}")
         print(f"chat             : {'켜짐 (하루 ' + str(cfg.chat_max_per_day) + '회)' if cfg.chat_enabled else '꺼짐'}")
+        print(f"news             : {len(cfg.news_feeds)}개 피드 / 시각 {cfg.news_hours or '매 점검'}")
+        print(f"market           : {', '.join(cfg.market_queries) if cfg.market_queries else '꺼짐'}")
         ta = cfg.task_accounts()
         print("tasks            : " + (", ".join((a.name or "기본") + (" (권한 있음)" if google_auth.token_has_scope(a.token_path, google_auth.TASKS_SCOPE) else " (권한 없음: google-login --tasks)") for a in ta) if ta else "꺼짐"))
+        print(f"nudges           : {', '.join(cfg.nudges) + ' (바쁜 날 기준 일정 ' + str(cfg.busy_events) + '개)' if cfg.nudges else '꺼짐'}")
+        print("github           : " + (", ".join(
+            f"{n} (토큰 {'있음' if os.environ.get(github_brief.token_env_name(n)) else '없음'})"
+            for n in cfg.github_accounts) if cfg.github_accounts else "꺼짐"))
         print(f"llm_highlights   : {', '.join(cfg.llm_highlights) if cfg.llm_highlights else '꺼짐'}")
         print(f"rules            : {'켜짐' if cfg.rules_enabled else '꺼짐'}"
               f" / 광고·정기 메일 접기 {'켜짐' if cfg.mail_bulk_fold else '꺼짐'}")
